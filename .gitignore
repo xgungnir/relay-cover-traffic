@@ -1,0 +1,39 @@
+# Local runtime configuration
+*.env
+!*.env.example
+config/*.local
+config/*.local.*
+
+# Logs and command output
+*.log
+*.out
+*.err
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.cache/
+tmp/
+temp/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Archives and local backups
+*.bak
+*.backup
+*.old
+*.orig
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
+.notes
