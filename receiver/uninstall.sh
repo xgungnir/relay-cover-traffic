@@ -12,11 +12,14 @@ fi
 
 ENV_FILE="/etc/relay-cover-traffic/receiver.env"
 NFT_INCLUDE_FILE="/etc/nftables.d/relay-cover-traffic.nft"
+NFT_CONFIG_FILE="/etc/nftables.conf"
 NFT_TABLE="relay_cover_traffic"
 LEGACY_NFT_INCLUDE_FILE="/etc/nftables.d/vps-relay-dummy.nft"
 LEGACY_NFT_TABLE="vps_relay_dummy"
 IPTABLES_CHAIN="RELAY_COVER_TRAFFIC"
 LEGACY_IPTABLES_CHAIN="VPS_RELAY_DUMMY"
+NFT_INCLUDE_MARKER_BEGIN="# relay-cover-traffic include begin"
+NFT_INCLUDE_MARKER_END="# relay-cover-traffic include end"
 PURGE="false"
 
 remove_xtables_project_jumps() {
@@ -85,6 +88,14 @@ remove_iptables_legacy_rules() {
   fi
 }
 
+remove_project_nftables_include_marker() {
+  [[ -f "$NFT_CONFIG_FILE" ]] || return 0
+  grep -Fq "$NFT_INCLUDE_MARKER_BEGIN" "$NFT_CONFIG_FILE" || return 0
+
+  log "INFO" "removing project nftables include marker from $NFT_CONFIG_FILE"
+  sed -i "/^${NFT_INCLUDE_MARKER_BEGIN}$/,/^${NFT_INCLUDE_MARKER_END}$/d" "$NFT_CONFIG_FILE"
+}
+
 case "${1:-}" in
   "")
     ;;
@@ -97,7 +108,7 @@ case "${1:-}" in
 esac
 
 require_root
-require_cmd systemctl rm awk
+require_cmd systemctl rm awk grep sed
 
 if [[ -f "$ENV_FILE" ]]; then
   log "INFO" "using receiver env path: $ENV_FILE"
@@ -119,6 +130,7 @@ if command -v nft >/dev/null 2>&1; then
   nft delete table inet "$NFT_TABLE" 2>/dev/null || true
   nft delete table inet "$LEGACY_NFT_TABLE" 2>/dev/null || true
 fi
+remove_project_nftables_include_marker
 
 remove_iptables_legacy_rules
 

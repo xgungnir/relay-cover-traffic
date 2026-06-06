@@ -14,11 +14,14 @@ ENV_FILE="/etc/relay-cover-traffic/receiver.env"
 ENV_SOURCE="$SCRIPT_DIR/../config/receiver.env"
 NFT_INCLUDE_DIR="/etc/nftables.d"
 NFT_INCLUDE_FILE="$NFT_INCLUDE_DIR/relay-cover-traffic.nft"
+NFT_CONFIG_FILE="/etc/nftables.conf"
 NFT_TABLE="relay_cover_traffic"
 LEGACY_NFT_INCLUDE_FILE="$NFT_INCLUDE_DIR/vps-relay-dummy.nft"
 LEGACY_NFT_TABLE="vps_relay_dummy"
 IPTABLES_CHAIN="RELAY_COVER_TRAFFIC"
 LEGACY_IPTABLES_CHAIN="VPS_RELAY_DUMMY"
+NFT_INCLUDE_MARKER_BEGIN="# relay-cover-traffic include begin"
+NFT_INCLUDE_MARKER_END="# relay-cover-traffic include end"
 COVER_SOURCE_WHITELIST_V4_ENTRIES=()
 COVER_SOURCE_WHITELIST_V6_ENTRIES=()
 
@@ -156,6 +159,62 @@ delete_iptables_legacy_project_rules() {
   fi
 }
 
+ensure_nftables_config_include() {
+  require_cmd grep
+
+  if [[ ! -f "$NFT_CONFIG_FILE" ]]; then
+    log "INFO" "creating $NFT_CONFIG_FILE with project include"
+    {
+      printf '%s\n' '#!/usr/sbin/nft -f'
+      printf '%s\n\n' 'flush ruleset'
+      printf '%s\n' "$NFT_INCLUDE_MARKER_BEGIN"
+      printf '%s\n' 'include "/etc/nftables.d/*.nft"'
+      printf '%s\n' "$NFT_INCLUDE_MARKER_END"
+    } >"$NFT_CONFIG_FILE"
+    chmod 0644 "$NFT_CONFIG_FILE"
+    return 0
+  fi
+
+  if grep -Eq '^[[:space:]]*include[[:space:]]+"/etc/nftables\.d/\*\.nft"' "$NFT_CONFIG_FILE"; then
+    log "INFO" "$NFT_CONFIG_FILE already includes /etc/nftables.d/*.nft"
+    return 0
+  fi
+
+  log "INFO" "adding project nftables include marker to $NFT_CONFIG_FILE"
+  {
+    printf '\n%s\n' "$NFT_INCLUDE_MARKER_BEGIN"
+    printf '%s\n' 'include "/etc/nftables.d/*.nft"'
+    printf '%s\n' "$NFT_INCLUDE_MARKER_END"
+  } >>"$NFT_CONFIG_FILE"
+}
+
+netfilter_persistent_has_iptables_plugins() {
+  command -v netfilter-persistent >/dev/null 2>&1 &&
+    [[ -e /usr/share/netfilter-persistent/plugins.d/15-ip4tables ]] &&
+    [[ -e /usr/share/netfilter-persistent/plugins.d/25-ip6tables ]]
+}
+
+ensure_iptables_persistent() {
+  if netfilter_persistent_has_iptables_plugins; then
+    log "INFO" "netfilter-persistent iptables/ip6tables plugins already installed"
+  else
+    require_cmd apt-get
+    export DEBIAN_FRONTEND=noninteractive
+    log "INFO" "installing netfilter-persistent and iptables-persistent for IPv4/IPv6 rule persistence"
+    apt-get update
+    apt-get install -y netfilter-persistent iptables-persistent
+  fi
+
+  netfilter_persistent_has_iptables_plugins || die "netfilter-persistent iptables/ip6tables plugins are missing after install"
+  systemctl enable netfilter-persistent.service >/dev/null 2>&1 || true
+}
+
+save_iptables_legacy_rules() {
+  ensure_iptables_persistent
+  log "INFO" "saving IPv4 and IPv6 iptables legacy rules with netfilter-persistent"
+  netfilter-persistent save
+}
+
 apply_nftables_rules() {
   local entry
 
@@ -167,6 +226,7 @@ apply_nftables_rules() {
   systemctl enable --now nftables
 
   install -d -m 0755 "$NFT_INCLUDE_DIR"
+  ensure_nftables_config_include
 
   log "INFO" "writing project nftables include file to $NFT_INCLUDE_FILE"
   {
@@ -195,12 +255,6 @@ NFT
 
   log "INFO" "applying only table inet $NFT_TABLE"
   nft -f "$NFT_INCLUDE_FILE"
-
-  if ! grep -Eq '^[[:space:]]*include[[:space:]]+"/etc/nftables\.d/\*\.nft"' /etc/nftables.conf 2>/dev/null; then
-    log "WARN" "$NFT_INCLUDE_FILE was applied now, but /etc/nftables.conf does not include /etc/nftables.d/*.nft"
-    log "WARN" "Add this line to /etc/nftables.conf if you want this project nftables table loaded by nftables.service after reboot:"
-    log "WARN" 'include "/etc/nftables.d/*.nft"'
-  fi
 
   log "INFO" "project nftables rules applied"
   log "WARN" "If another nftables base chain already uses default-deny input policy, also integrate explicit allows for COVER_SOURCE_WHITELIST_V4/COVER_SOURCE_WHITELIST_V6 and COVER_RECEIVER_PORT=$COVER_RECEIVER_PORT in that policy."
@@ -256,12 +310,7 @@ apply_iptables_legacy_rules() {
     ip6tables -I INPUT 1 -p tcp --dport "$COVER_RECEIVER_PORT" -j "$IPTABLES_CHAIN"
   fi
 
-  if command -v netfilter-persistent >/dev/null 2>&1; then
-    log "INFO" "saving iptables legacy rules with netfilter-persistent"
-    netfilter-persistent save
-  else
-    log "WARN" "iptables legacy rules were applied now, but netfilter-persistent is not installed; install iptables-persistent or otherwise persist these rules before reboot."
-  fi
+  save_iptables_legacy_rules
 
   log "INFO" "project iptables legacy rules applied"
 }

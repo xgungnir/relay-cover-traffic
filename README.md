@@ -166,6 +166,20 @@ Relay QoS applies only to egress on `EGRESS_DEV`.
 
 Receiver firewall rules protect only `COVER_RECEIVER_PORT`. With nftables the project creates `table inet relay_cover_traffic`; with iptables legacy it creates `RELAY_COVER_TRAFFIC`. It allows whitelisted TCP/UDP cover traffic and drops other TCP/UDP traffic to that port.
 
+Firewall persistence depends on `FIREWALL_BACKEND`:
+
+```text
+nftables
+  uses nftables.service and /etc/nftables.conf
+  setup-firewall.sh writes /etc/nftables.d/relay-cover-traffic.nft
+  if needed, it adds a marked include block for /etc/nftables.d/*.nft
+
+iptables-legacy
+  uses netfilter-persistent with the iptables-persistent IPv4/IPv6 plugins
+  setup-firewall.sh installs netfilter-persistent and iptables-persistent when missing
+  rules are saved to /etc/iptables/rules.v4 and /etc/iptables/rules.v6
+```
+
 ## After Env Changes
 
 Edit `config/relay.env` or `config/receiver.env`, then run the matching repo-side script below. Those scripts sync the relevant env file into `/etc/relay-cover-traffic/` before reading it. Rerunning the full installer also works, but is usually more than needed:
@@ -252,4 +266,6 @@ sudo ./uninstall.sh
 sudo ./uninstall.sh --purge
 ```
 
-`--purge` removes the role env file under `/etc/relay-cover-traffic`. Non-empty `/etc/realm/config.toml`, `/usr/local/bin/realm`, the sing-box package, and `/etc/sing-box/config.json` are preserved.
+Receiver uninstall removes the project firewall rules from the active ruleset. For iptables legacy it saves the removal through `netfilter-persistent` when available. For nftables it removes the project include file and the marked include block that this project added to `/etc/nftables.conf`.
+
+`--purge` removes the role env file under `/etc/relay-cover-traffic`. Non-empty `/etc/realm/config.toml`, `/usr/local/bin/realm`, the sing-box package, firewall persistence packages, and `/etc/sing-box/config.json` are preserved.
