@@ -104,6 +104,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/iperf3 --server --bind ${bind_address} --port ${COVER_RECEIVER_PORT} --interval 0
+SuccessExitStatus=1
 Restart=always
 RestartSec=3
 
@@ -178,6 +179,8 @@ fi
 
 systemctl reset-failed relay-cover-receiver.service 2>/dev/null || true
 systemctl reset-failed \
+  relay-cover-receiver-v4.service \
+  relay-cover-receiver-v6.service \
   iperf3-dummy-receiver.service \
   iperf3-dummy-receiver-v4.service \
   iperf3-dummy-receiver-v6.service 2>/dev/null || true

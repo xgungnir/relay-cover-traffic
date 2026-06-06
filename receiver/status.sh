@@ -18,6 +18,18 @@ LEGACY_UNITS=(
   iperf3-dummy-receiver-v6.service
 )
 
+show_current_activation_journal() {
+  local unit="${1:?unit is required}"
+  local since=""
+
+  since="$(systemctl show "$unit" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  if [[ -n "$since" && "$since" != "n/a" ]]; then
+    journalctl -u "$unit" --since "$since" -n 50 --no-pager || true
+  else
+    journalctl -u "$unit" -n 50 --no-pager || true
+  fi
+}
+
 require_root
 sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
@@ -53,8 +65,8 @@ if command -v ip6tables >/dev/null 2>&1; then
   ip6tables -S RELAY_COVER_TRAFFIC 2>/dev/null || true
 fi
 
-journalctl -u relay-cover-receiver-v4.service -n 50 --no-pager || true
-journalctl -u relay-cover-receiver-v6.service -n 50 --no-pager || true
+show_current_activation_journal relay-cover-receiver-v4.service
+show_current_activation_journal relay-cover-receiver-v6.service
 
 if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' sing-box 2>/dev/null | grep -q 'install ok installed'; then
   log "INFO" "sing-box package is installed"
