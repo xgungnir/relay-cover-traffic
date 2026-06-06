@@ -48,6 +48,7 @@ Wants=network-online.target relay-cover-qos.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/relay-cover-sender-hourly.sh
+SuccessExitStatus=SIGTERM SIGINT
 SERVICE
 chmod 0644 "$SERVICE_FILE"
 
@@ -68,6 +69,7 @@ TIMER
 chmod 0644 "$TIMER_FILE"
 
 systemctl daemon-reload
+systemctl reset-failed relay-cover-sender.service relay-cover-sender.timer 2>/dev/null || true
 systemctl enable --now relay-cover-sender.timer
 
 log "INFO" "relay-cover-sender.timer installed and enabled"

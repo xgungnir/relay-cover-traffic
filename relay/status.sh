@@ -30,6 +30,28 @@ port_regex() {
   printf '%s\n' "${ports[*]}"
 }
 
+show_unit_status() {
+  local unit="${1:?unit is required}"
+
+  systemctl --no-pager --lines=0 status "$unit" || true
+}
+
+show_current_activation_journal() {
+  local unit="${1:?unit is required}"
+  local state=""
+  local since=""
+
+  state="$(systemctl show "$unit" -p ActiveState --value 2>/dev/null || true)"
+  [[ "$state" == "active" || "$state" == "activating" ]] || return 0
+
+  since="$(systemctl show "$unit" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+  if [[ -n "$since" && "$since" != "n/a" ]]; then
+    journalctl -u "$unit" --since "$since" -n 80 --no-pager || true
+  else
+    journalctl -u "$unit" -n 80 --no-pager || true
+  fi
+}
+
 require_root
 sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
@@ -44,15 +66,15 @@ printf 'RELAY_QOS_TARGETS=%s\n' "$RELAY_QOS_TARGETS"
 printf 'COVER_TARGETS=%s\n' "$COVER_TARGETS"
 printf 'COVER_TYPE=%s\n' "$COVER_TYPE"
 
-systemctl status realm.service --no-pager || true
-systemctl status relay-cover-qos.service --no-pager || true
-systemctl status relay-cover-sender.service --no-pager || true
-systemctl status relay-cover-sender.timer --no-pager || true
+show_unit_status realm.service
+show_unit_status relay-cover-qos.service
+show_unit_status relay-cover-sender.service
+show_unit_status relay-cover-sender.timer
 systemctl list-timers relay-cover-sender.timer --no-pager || true
 tc -s qdisc show dev "$EGRESS_DEV" || true
 tc -s class show dev "$EGRESS_DEV" || true
 tc filter show dev "$EGRESS_DEV" parent 1: || true
 ss -tupn | grep -E ":($(port_regex))\\b" || true
-journalctl -u realm.service -n 80 --no-pager || true
-journalctl -u relay-cover-qos.service -n 80 --no-pager || true
-journalctl -u relay-cover-sender.service -n 80 --no-pager || true
+show_current_activation_journal realm.service
+show_current_activation_journal relay-cover-qos.service
+show_current_activation_journal relay-cover-sender.service
