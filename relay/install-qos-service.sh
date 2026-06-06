@@ -11,10 +11,12 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 UNIT_FILE="/etc/systemd/system/relay-cover-qos.service"
 
 require_root
 require_cmd systemctl install tr
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env EGRESS_DEV RELAY_QOS_TARGETS COVER_TARGETS TC_TOTAL_RATE TC_RELAY_RATE TC_RELAY_CEIL TC_COVER_RATE TC_COVER_CEIL TC_DEFAULT_RATE TC_DEFAULT_CEIL
 parse_target_list "$RELAY_QOS_TARGETS" >/dev/null

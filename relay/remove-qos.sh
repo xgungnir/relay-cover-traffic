@@ -14,9 +14,13 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 
 require_root
 require_cmd tc
+if [[ -f "$ENV_SOURCE" ]]; then
+  sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
+fi
 load_env_file "$ENV_FILE"
 require_env EGRESS_DEV
 

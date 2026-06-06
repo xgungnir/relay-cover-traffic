@@ -11,6 +11,7 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 PURGE="false"
 
 case "${1:-}" in
@@ -26,6 +27,10 @@ esac
 
 require_root
 require_cmd systemctl rm grep
+
+if [[ -f "$ENV_SOURCE" ]]; then
+  sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
+fi
 
 if [[ -f "$ENV_FILE" ]]; then
   load_env_file "$ENV_FILE"

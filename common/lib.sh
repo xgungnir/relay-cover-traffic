@@ -47,6 +47,33 @@ load_env_file() {
   set +a
 }
 
+require_config_env_file() {
+  local env_file="${1:?config env path is required}"
+  local example_file="${2:-}"
+
+  if [[ -f "$env_file" ]]; then
+    return 0
+  fi
+
+  if [[ -n "$example_file" ]]; then
+    die "required config env file not found: $env_file; create it from $example_file, edit it, then rerun this script"
+  fi
+
+  die "required config env file not found: $env_file"
+}
+
+sync_runtime_env_file() {
+  local src="${1:?source env path is required}"
+  local dest="${2:?runtime env path is required}"
+
+  require_config_env_file "$src"
+  command -v install >/dev/null 2>&1 || die "required command not found: install"
+
+  install -d -m 0755 "${dest%/*}"
+  install -m 0600 "$src" "$dest"
+  log "INFO" "synced env from $src to $dest"
+}
+
 install_file() {
   local src="${1:?source path is required}"
   local dest="${2:?destination path is required}"

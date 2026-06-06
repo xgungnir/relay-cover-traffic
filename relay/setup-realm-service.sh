@@ -11,6 +11,7 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 REALM_BIN="/usr/local/bin/realm"
 REALM_DIR="/etc/realm"
 REALM_CONFIG="$REALM_DIR/config.toml"
@@ -127,6 +128,7 @@ ensure_realm_binary_version() {
 
 require_root
 require_cmd systemctl install curl tar find mktemp mkdir chmod grep mv
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env REALM_TARBALL_URL
 

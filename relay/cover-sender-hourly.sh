@@ -14,6 +14,7 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 LOCK_FILE="/run/relay-cover-sender.lock"
 MAX_COVER_BPS=5000000
 
@@ -126,6 +127,9 @@ run_iperf3_process() {
 
 require_root
 require_cmd date flock iperf3 sleep tr
+if [[ -f "$ENV_SOURCE" ]]; then
+  sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
+fi
 load_env_file "$ENV_FILE"
 require_env COVER_TARGETS COVER_RATE COVER_MIN_SECONDS COVER_MAX_SECONDS COVER_RETRY_DELAY_SECONDS COVER_MAX_SEGMENT_SECONDS
 COVER_TYPE="${COVER_TYPE:-auto}"

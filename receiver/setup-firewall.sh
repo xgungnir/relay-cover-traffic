@@ -11,6 +11,7 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/receiver.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/receiver.env"
 NFT_INCLUDE_DIR="/etc/nftables.d"
 NFT_INCLUDE_FILE="$NFT_INCLUDE_DIR/relay-cover-traffic.nft"
 NFT_TABLE="relay_cover_traffic"
@@ -266,6 +267,7 @@ apply_iptables_legacy_rules() {
 }
 
 require_root
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_RECEIVER_PORT FIREWALL_BACKEND
 validate_port "$COVER_RECEIVER_PORT" || die "invalid COVER_RECEIVER_PORT: $COVER_RECEIVER_PORT"

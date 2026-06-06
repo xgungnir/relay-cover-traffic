@@ -14,6 +14,7 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 MAX_COVER_BPS=5000000
 filter_prio=10
 
@@ -110,6 +111,9 @@ apply_target_filters() {
 
 require_root
 require_cmd ip tc getent awk sort tr
+if [[ -f "$ENV_SOURCE" ]]; then
+  sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
+fi
 load_env_file "$ENV_FILE"
 require_env EGRESS_DEV RELAY_QOS_TARGETS COVER_TARGETS TC_TOTAL_RATE TC_RELAY_RATE TC_RELAY_CEIL TC_COVER_RATE TC_COVER_CEIL TC_DEFAULT_RATE TC_DEFAULT_CEIL
 DEV="$EGRESS_DEV"

@@ -11,11 +11,13 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 SERVICE_FILE="/etc/systemd/system/relay-cover-sender.service"
 TIMER_FILE="/etc/systemd/system/relay-cover-sender.timer"
 
 require_root
 require_cmd iperf3 systemctl install tr
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_TARGETS COVER_RATE COVER_MIN_SECONDS COVER_MAX_SECONDS COVER_RETRY_DELAY_SECONDS COVER_MAX_SEGMENT_SECONDS
 COVER_TYPE="${COVER_TYPE:-auto}"

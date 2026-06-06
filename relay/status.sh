@@ -11,6 +11,7 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 ports=()
 
 collect_target_ports() {
@@ -29,6 +30,8 @@ port_regex() {
   printf '%s\n' "${ports[*]}"
 }
 
+require_root
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env EGRESS_DEV RELAY_QOS_TARGETS COVER_TARGETS
 COVER_TYPE="${COVER_TYPE:-auto}"

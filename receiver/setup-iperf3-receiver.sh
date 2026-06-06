@@ -11,6 +11,7 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/receiver.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/receiver.env"
 LEGACY_UNIT_FILE="/etc/systemd/system/relay-cover-receiver.service"
 UNIT_FILE_V4="/etc/systemd/system/relay-cover-receiver-v4.service"
 UNIT_FILE_V6="/etc/systemd/system/relay-cover-receiver-v6.service"
@@ -114,6 +115,7 @@ UNIT
 
 require_root
 require_cmd ip iperf3 systemctl install
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_RECEIVER_PORT
 validate_port "$COVER_RECEIVER_PORT" || die "invalid COVER_RECEIVER_PORT: $COVER_RECEIVER_PORT"

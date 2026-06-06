@@ -11,12 +11,15 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/receiver.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/receiver.env"
 LEGACY_UNITS=(
   iperf3-dummy-receiver.service
   iperf3-dummy-receiver-v4.service
   iperf3-dummy-receiver-v6.service
 )
 
+require_root
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_RECEIVER_PORT
 require_cmd systemctl grep ip ss journalctl

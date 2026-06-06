@@ -37,7 +37,9 @@ relay-cover-traffic/
 ├── common/lib.sh
 ├── config/
 │   ├── relay.env.example
-│   └── receiver.env.example
+│   ├── relay.env
+│   ├── receiver.env.example
+│   └── receiver.env
 ├── relay/
 │   ├── install.sh
 │   ├── install-deps.sh
@@ -56,12 +58,16 @@ relay-cover-traffic/
     └── uninstall.sh
 ```
 
-Local `config/*.env` files are ignored by Git. Runtime env files live under:
+Local `config/*.env` files are ignored by Git. Prepare the real env files under `config/`; `install.sh` copies them to the runtime location on every run:
 
 ```text
 /etc/relay-cover-traffic/receiver.env
 /etc/relay-cover-traffic/relay.env
 ```
+
+Do not edit the runtime copies directly unless you are deliberately bypassing the installer, because the next `install.sh` run overwrites them from `config/*.env`.
+
+The installer does not create `config/*.env` for you. If the role env file is missing, it exits before installing dependencies.
 
 ## First Install
 
@@ -69,14 +75,10 @@ Receiver:
 
 ```bash
 git clone <repo-url> relay-cover-traffic
-cd relay-cover-traffic/receiver
-sudo ./install.sh
-```
-
-If `/etc/relay-cover-traffic/receiver.env` does not exist, `install.sh` creates it from `config/receiver.env.example`, installs dependencies, then stops. Edit the env file and rerun:
-
-```bash
-sudo nano /etc/relay-cover-traffic/receiver.env
+cd relay-cover-traffic
+cp config/receiver.env.example config/receiver.env
+nano config/receiver.env
+cd receiver
 sudo ./install.sh
 ```
 
@@ -84,14 +86,10 @@ Relay:
 
 ```bash
 git clone <repo-url> relay-cover-traffic
-cd relay-cover-traffic/relay
-sudo ./install.sh
-```
-
-If `/etc/relay-cover-traffic/relay.env` does not exist, `install.sh` creates it from `config/relay.env.example`, installs dependencies, then stops. Edit the env file and rerun:
-
-```bash
-sudo nano /etc/relay-cover-traffic/relay.env
+cd relay-cover-traffic
+cp config/relay.env.example config/relay.env
+nano config/relay.env
+cd relay
 sudo ./install.sh
 ```
 
@@ -126,8 +124,8 @@ relay-cover-receiver-v6.service
 Status:
 
 ```bash
-cd relay && sudo ./status.sh
-cd receiver && sudo ./status.sh
+(cd relay && sudo ./status.sh)
+(cd receiver && sudo ./status.sh)
 ```
 
 ## Cover Sender
@@ -170,6 +168,13 @@ Receiver firewall rules protect only `COVER_RECEIVER_PORT`. With nftables the pr
 
 ## After Env Changes
 
+Edit `config/relay.env` or `config/receiver.env`, then run the matching repo-side script below. Those scripts sync the relevant env file into `/etc/relay-cover-traffic/` before reading it. Rerunning the full installer also works, but is usually more than needed:
+
+```bash
+(cd relay && sudo ./install.sh)
+(cd receiver && sudo ./install.sh)
+```
+
 Relay changes:
 
 ```text
@@ -180,24 +185,26 @@ REALM_TARBALL_URL
   sudo systemctl restart realm.service
 
 RELAY_QOS_TARGETS, TC_TOTAL_RATE, TC_RELAY_*, TC_COVER_*, TC_DEFAULT_*
-  sudo systemctl restart relay-cover-qos.service
+  cd relay && sudo ./setup-qos.sh
 
 COVER_TARGETS
-  sudo systemctl restart relay-cover-qos.service
+  cd relay && sudo ./setup-qos.sh
   next timer run uses the new targets automatically
   to run now: sudo systemctl stop relay-cover-sender.service && sudo systemctl start relay-cover-sender.service
 
 COVER_RATE, COVER_TYPE, COVER_MIN_SECONDS, COVER_MAX_SECONDS, COVER_RETRY_DELAY_SECONDS, COVER_MAX_SEGMENT_SECONDS
+  cd relay && sudo ./install-cover-sender.sh
   next timer run uses the new values automatically
   to run now: sudo systemctl stop relay-cover-sender.service && sudo systemctl start relay-cover-sender.service
 
 ALLOW_COVER_RATE_ABOVE_5M
+  cd relay && sudo ./install-cover-sender.sh
   affects sender runs immediately on next start
-  also restart relay-cover-qos.service if TC_COVER_CEIL is above 5mbit
+  also run cd relay && sudo ./setup-qos.sh if TC_COVER_CEIL is above 5mbit
 
 EGRESS_DEV
   before editing env: sudo systemctl stop relay-cover-qos.service
-  after editing env:  sudo systemctl restart relay-cover-qos.service
+  after editing env:  cd relay && sudo ./install-qos-service.sh
 ```
 
 Receiver changes:
@@ -211,7 +218,7 @@ COVER_BIND_ADDRESS_V4, COVER_BIND_ADDRESS_V6
 
 COVER_RECEIVER_PORT
   cd receiver && sudo ./setup-iperf3-receiver.sh && sudo ./setup-firewall.sh
-  also update relay COVER_TARGETS, then restart relay-cover-qos.service on each relay
+  also update relay COVER_TARGETS, then run cd relay && sudo ./setup-qos.sh on each relay
 
 SING_BOX_SERVICE_PORT
   project reference only; no relay-cover service restart is needed
@@ -223,8 +230,8 @@ SING_BOX_SERVICE_PORT
 After pulling code changes to installed helper scripts, rerun the relevant installer:
 
 ```bash
-cd relay && sudo ./install.sh
-cd receiver && sudo ./install.sh
+(cd relay && sudo ./install.sh)
+(cd receiver && sudo ./install.sh)
 ```
 
 ## Uninstall

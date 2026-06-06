@@ -11,9 +11,11 @@ else
 fi
 
 ENV_FILE="/etc/relay-cover-traffic/relay.env"
+ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 
 require_root
 require_cmd apt-get systemctl
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 
 export DEBIAN_FRONTEND=noninteractive
 
