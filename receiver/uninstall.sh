@@ -125,6 +125,9 @@ systemctl disable --now \
   iperf3-dummy-receiver-v4.service \
   iperf3-dummy-receiver-v6.service 2>/dev/null || true
 
+log "INFO" "disabling sing-box.service"
+systemctl disable sing-box.service 2>/dev/null || true
+
 if command -v nft >/dev/null 2>&1; then
   log "INFO" "deleting project nftables tables if present"
   nft delete table inet "$NFT_TABLE" 2>/dev/null || true

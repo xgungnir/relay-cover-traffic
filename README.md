@@ -25,7 +25,7 @@ Receiver side:
 - Installs receiver dependencies.
 - Installs the `sing-box` package from the Sagernet APT repo when needed.
 - Adds the Sagernet APT key/repo if missing, even when `sing-box` is already installed.
-- The repo package normally provides `/lib/systemd/system/sing-box.service` by default.
+- Enables the packaged `sing-box.service`; it does not start it before you configure sing-box.
 - Does not generate or overwrite `/etc/sing-box/config.json`.
 - Installs IPv4/IPv6 `relay-cover-receiver-*` iperf3 services.
 - Applies project-only firewall rules for `COVER_RECEIVER_PORT`.
@@ -268,6 +268,6 @@ sudo ./uninstall.sh
 sudo ./uninstall.sh --purge
 ```
 
-Receiver uninstall removes the project firewall rules from the active ruleset. For iptables legacy it saves the removal through `netfilter-persistent` when available. For nftables it removes the project include file and the marked include block that this project added to `/etc/nftables.conf`.
+Receiver uninstall disables `sing-box.service` and removes the project firewall rules from the active ruleset. For iptables legacy it saves the removal through `netfilter-persistent` when available. For nftables it removes the project include file and the marked include block that this project added to `/etc/nftables.conf`.
 
 `--purge` removes the role env file under `/etc/relay-cover-traffic`. Non-empty `/etc/realm/config.toml`, `/usr/local/bin/realm`, the sing-box package, firewall persistence packages, and `/etc/sing-box/config.json` are preserved.

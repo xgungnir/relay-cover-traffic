@@ -11,7 +11,7 @@ else
 fi
 
 require_root
-require_cmd apt-get
+require_cmd apt-get systemctl
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -43,6 +43,11 @@ sagernet_key_present() {
 
 sing_box_installed() {
   dpkg-query -W -f='${Status}' sing-box 2>/dev/null | grep -q 'install ok installed'
+}
+
+enable_sing_box_service() {
+  log "INFO" "enabling sing-box.service"
+  systemctl enable sing-box.service
 }
 
 install_sagernet_key() {
@@ -102,6 +107,8 @@ install_sing_box_from_sagernet_repo() {
     log "WARN" "sing-box was installed for the first time by this script."
     log "WARN" "Adjust your sing-box configuration at $SING_BOX_CONFIG before starting or restarting sing-box."
   fi
+
+  enable_sing_box_service
 }
 
 log "INFO" "installing receiver dependencies"
