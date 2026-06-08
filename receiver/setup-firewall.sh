@@ -96,6 +96,7 @@ parse_whitelist() {
   local -n out="$3"
   local entry
   local normalized
+  local existing
 
   normalized="${raw//,/ }"
   out=()
@@ -113,6 +114,11 @@ parse_whitelist() {
         die "internal error: unsupported whitelist family $family"
         ;;
     esac
+
+    for existing in "${out[@]}"; do
+      [[ "$existing" == "$entry" ]] && continue 2
+    done
+
     out+=("$entry")
   done
 }
@@ -137,6 +143,7 @@ delete_nftables_project_rules() {
 }
 
 delete_iptables_legacy_project_rules() {
+  local save_persistent="${1:-true}"
   local mode
   local mode6
 
@@ -154,7 +161,7 @@ delete_iptables_legacy_project_rules() {
     delete_xtables_chain ip6tables "$LEGACY_IPTABLES_CHAIN"
   fi
 
-  if command -v netfilter-persistent >/dev/null 2>&1; then
+  if [[ "$save_persistent" == "true" ]] && command -v netfilter-persistent >/dev/null 2>&1; then
     netfilter-persistent save
   fi
 }
@@ -202,7 +209,7 @@ ensure_iptables_persistent() {
     export DEBIAN_FRONTEND=noninteractive
     log "INFO" "installing netfilter-persistent and iptables-persistent for IPv4/IPv6 rule persistence"
     apt-get update
-    apt-get install -y netfilter-persistent iptables-persistent
+    apt_get_install netfilter-persistent iptables-persistent
   fi
 
   netfilter_persistent_has_iptables_plugins || die "netfilter-persistent iptables/ip6tables plugins are missing after install"
@@ -276,7 +283,7 @@ apply_iptables_legacy_rules() {
   fi
 
   delete_nftables_project_rules
-  delete_iptables_legacy_project_rules
+  delete_iptables_legacy_project_rules false
 
   log "INFO" "using iptables legacy backend: $(iptables --version)"
   log "INFO" "recreating project iptables chain $IPTABLES_CHAIN"

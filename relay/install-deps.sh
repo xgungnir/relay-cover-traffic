@@ -21,10 +21,10 @@ export DEBIAN_FRONTEND=noninteractive
 
 log "INFO" "installing relay dependencies"
 apt-get update
-apt-get install -y iperf3 iproute2 systemd ca-certificates curl jq util-linux tar
+apt_get_install iperf3 iproute2 systemd ca-certificates curl jq util-linux tar
 
 log "INFO" "disabling Debian's default iperf3 service on relay node"
-systemctl disable --now iperf3 || true
+disable_default_iperf3_service
 
 if [[ -x /usr/local/bin/realm ]]; then
   log "INFO" "realm binary found at /usr/local/bin/realm"

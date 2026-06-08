@@ -103,6 +103,8 @@ sudo ./install.sh
 
 The installer refuses to continue when env files still contain example placeholder addresses.
 
+On first dependency install, Debian's `iperf3` package can emit maintainer-script messages such as `deb-systemd-helper was not called from dpkg` or `Failed to stop iperf3.service: Unit iperf3.service not loaded`. The installer filters those known harmless lines during dependency install and default `iperf3` service cleanup; if `apt-get` really fails, the script still stops.
+
 ## Services
 
 Relay:

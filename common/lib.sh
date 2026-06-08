@@ -83,6 +83,24 @@ install_file() {
   install -D -m "$mode" "$src" "$dest"
 }
 
+filter_known_iperf3_install_noise() {
+  sed \
+    -e '/^\/usr\/bin\/deb-systemd-helper was not called from dpkg\. Exiting\.$/d' \
+    -e '/^Failed to stop iperf3\.service: Unit iperf3\.service not loaded\.$/d'
+}
+
+apt_get_install() {
+  require_cmd apt-get sed
+
+  apt-get install -y "$@" 2>&1 | filter_known_iperf3_install_noise
+}
+
+disable_default_iperf3_service() {
+  require_cmd systemctl sed
+
+  systemctl disable --now iperf3 2>&1 | filter_known_iperf3_install_noise || true
+}
+
 is_positive_int() {
   local value="${1:-}"
   [[ "$value" =~ ^[1-9][0-9]*$ ]]

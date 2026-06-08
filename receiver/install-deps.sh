@@ -106,7 +106,7 @@ install_sing_box_from_sagernet_repo() {
 
 log "INFO" "installing receiver dependencies"
 apt-get update
-apt-get install -y iperf3 systemd nftables iptables ca-certificates curl jq
+apt_get_install iperf3 systemd nftables iptables ca-certificates curl jq
 
 install_sing_box_from_sagernet_repo
 

@@ -140,7 +140,7 @@ else
 fi
 
 log "INFO" "disabling Debian's default iperf3 service on receiver node"
-systemctl disable --now iperf3 || true
+disable_default_iperf3_service
 
 log "INFO" "stopping project iperf3 receiver units if present"
 systemctl disable --now \

@@ -12,6 +12,7 @@ fi
 
 ENV_FILE="/etc/relay-cover-traffic/receiver.env"
 ENV_SOURCE="$SCRIPT_DIR/../config/receiver.env"
+NFT_TABLE="relay_cover_traffic"
 LEGACY_UNITS=(
   iperf3-dummy-receiver.service
   iperf3-dummy-receiver-v4.service
@@ -50,7 +51,7 @@ ip -br addr 2>/dev/null | grep -vE '^(lo|warp|wg|tun|tailscale|docker|br-|virbr|
 ss -tulpn | grep "$COVER_RECEIVER_PORT" || true
 
 if command -v nft >/dev/null 2>&1; then
-  nft list ruleset | grep "$COVER_RECEIVER_PORT" -C 3 || true
+  nft list table inet "$NFT_TABLE" 2>/dev/null | grep "$COVER_RECEIVER_PORT" -C 3 || true
 fi
 
 if command -v iptables >/dev/null 2>&1; then
