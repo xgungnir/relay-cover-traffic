@@ -54,6 +54,7 @@ relay-cover-traffic/
     ├── install-deps.sh
     ├── setup-iperf3-receiver.sh
     ├── setup-firewall.sh
+    ├── check-dns.sh
     ├── status.sh
     └── uninstall.sh
 ```
@@ -129,6 +130,14 @@ Status:
 (cd relay && sudo ./status.sh)
 (cd receiver && sudo ./status.sh)
 ```
+
+Receiver DNS check/repair:
+
+```bash
+(cd receiver && sudo ./check-dns.sh)
+```
+
+`receiver/check-dns.sh` is a standalone recovery helper for resolver breakage caused by installing or removing `openresolv`, `resolvconf`, or `systemd-resolved`. It exits without changes when DNS already works. When DNS is broken, it prefers a working `systemd-resolved`, then `resolvconf`/`openresolv`, and finally writes a simple static `/etc/resolv.conf`. Override fallback servers with `sudo env DNS_SERVERS="1.1.1.1 8.8.8.8" ./check-dns.sh`.
 
 ## Cover Sender
 
