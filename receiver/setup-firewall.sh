@@ -333,6 +333,9 @@ BACKEND="$(normalize_firewall_backend "$FIREWALL_BACKEND")"
 log "INFO" "selected firewall backend: $BACKEND"
 log "INFO" "IPv4 cover source whitelist entries: ${#COVER_SOURCE_WHITELIST_V4_ENTRIES[@]}"
 log "INFO" "IPv6 cover source whitelist entries: ${#COVER_SOURCE_WHITELIST_V6_ENTRIES[@]}"
+if [[ "${#COVER_SOURCE_WHITELIST_V6_ENTRIES[@]}" -gt 0 ]]; then
+  log "INFO" "IPv6 firewall rules will be applied even if relay-cover-receiver-v6.service is not installed yet"
+fi
 
 case "$BACKEND" in
   nftables) apply_nftables_rules ;;

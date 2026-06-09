@@ -31,6 +31,26 @@ show_current_activation_journal() {
   fi
 }
 
+unit_exists() {
+  local unit="${1:?unit is required}"
+
+  systemctl cat "$unit" >/dev/null 2>&1
+}
+
+show_receiver_unit_status() {
+  local unit="${1:?unit is required}"
+  local family="${2:?address family is required}"
+
+  if unit_exists "$unit"; then
+    systemctl status "$unit" --no-pager || true
+    systemctl cat "$unit" 2>/dev/null | grep '^ExecStart=' || true
+  elif [[ "$family" == "IPv6" ]]; then
+    log "INFO" "$unit is not installed; no usable global IPv6 bind address may have been detected during receiver setup"
+  else
+    log "WARN" "$unit is not installed"
+  fi
+}
+
 require_root
 sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
@@ -43,10 +63,8 @@ for unit in "${LEGACY_UNITS[@]}"; do
   fi
 done
 
-systemctl status relay-cover-receiver-v4.service --no-pager || true
-systemctl status relay-cover-receiver-v6.service --no-pager || true
-systemctl cat relay-cover-receiver-v4.service 2>/dev/null | grep '^ExecStart=' || true
-systemctl cat relay-cover-receiver-v6.service 2>/dev/null | grep '^ExecStart=' || true
+show_receiver_unit_status relay-cover-receiver-v4.service IPv4
+show_receiver_unit_status relay-cover-receiver-v6.service IPv6
 ip -br addr 2>/dev/null | grep -vE '^(lo|warp|wg|tun|tailscale|docker|br-|virbr|veth)' || true
 ss -tulpn | grep "$COVER_RECEIVER_PORT" || true
 
@@ -66,8 +84,12 @@ if command -v ip6tables >/dev/null 2>&1; then
   ip6tables -S RELAY_COVER_TRAFFIC 2>/dev/null || true
 fi
 
-show_current_activation_journal relay-cover-receiver-v4.service
-show_current_activation_journal relay-cover-receiver-v6.service
+if unit_exists relay-cover-receiver-v4.service; then
+  show_current_activation_journal relay-cover-receiver-v4.service
+fi
+if unit_exists relay-cover-receiver-v6.service; then
+  show_current_activation_journal relay-cover-receiver-v6.service
+fi
 
 if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' sing-box 2>/dev/null | grep -q 'install ok installed'; then
   log "INFO" "sing-box package is installed"

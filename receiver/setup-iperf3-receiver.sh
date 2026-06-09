@@ -136,7 +136,7 @@ fi
 if [[ -n "$COVER_BIND_ADDRESS_V6_EFFECTIVE" ]]; then
   log "INFO" "IPv6 iperf3 receiver will bind to [${COVER_BIND_ADDRESS_V6_EFFECTIVE}]:${COVER_RECEIVER_PORT}"
 else
-  log "WARN" "no IPv6 iperf3 receiver will be installed"
+  log "WARN" "no usable global IPv6 bind address detected; relay-cover-receiver-v6.service will not be installed"
 fi
 
 log "INFO" "disabling Debian's default iperf3 service on receiver node"
