@@ -49,6 +49,7 @@ relay-cover-traffic/
 ├── relay/
 │   ├── install.sh
 │   ├── install-deps.sh
+│   ├── apply-env.sh
 │   ├── setup-sb-service.sh
 │   ├── setup-qos.sh
 │   ├── install-qos-service.sh
@@ -271,6 +272,17 @@ Edit `config/relay.env` or `config/receiver.env`, then run the matching repo-sid
 (cd relay && sudo ./install.sh)
 (cd receiver && sudo ./install.sh)
 ```
+
+For relay-side `config/relay.env` changes, the simplest path is:
+
+```bash
+cd relay
+sudo ./apply-env.sh
+```
+
+`relay/apply-env.sh` syncs `config/relay.env`, stops an active cover sender run if needed, removes the previously applied QoS state, reapplies relay QoS, refreshes the cover sender timer/service, and restarts `relay-cover-sender.service` only if it was already running.
+
+Use the more specific relay scripts below when you want a narrower change.
 
 Relay changes:
 
