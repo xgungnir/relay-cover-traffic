@@ -26,7 +26,7 @@ case "${1:-}" in
 esac
 
 require_root
-require_cmd systemctl rm grep
+require_cmd systemctl rm
 
 if [[ -f "$ENV_SOURCE" ]]; then
   sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
@@ -45,6 +45,9 @@ systemctl disable --now relay-cover-qos.service 2>/dev/null || true
 systemctl disable --now iperf3-dummy-hourly.timer 2>/dev/null || true
 systemctl disable --now iperf3-dummy-hourly.service 2>/dev/null || true
 systemctl disable --now tc-qos.service 2>/dev/null || true
+
+log "INFO" "disabling sing-box.service"
+systemctl disable sing-box.service 2>/dev/null || true
 
 if [[ -n "${EGRESS_DEV:-}" ]] && command -v tc >/dev/null 2>&1; then
   log "INFO" "removing tc root qdisc from $EGRESS_DEV if present"
@@ -75,23 +78,13 @@ if [[ "$PURGE" == "true" ]]; then
   log "WARN" "purging $ENV_FILE"
   rm -f "$ENV_FILE"
   rmdir /etc/relay-cover-traffic 2>/dev/null || true
-
-  if [[ -f /etc/realm/config.toml ]]; then
-    if grep -q '[^[:space:]]' /etc/realm/config.toml; then
-      log "WARN" "preserving non-empty /etc/realm/config.toml"
-    else
-      log "INFO" "removing empty /etc/realm/config.toml"
-      rm -f /etc/realm/config.toml
-      rmdir /etc/realm 2>/dev/null || true
-    fi
-  fi
 else
   log "INFO" "preserving $ENV_FILE"
 fi
 
 systemctl daemon-reload
 systemctl reset-failed \
-  realm.service \
+  sing-box.service \
   relay-cover-qos.service \
   relay-cover-sender.service \
   relay-cover-sender.timer \

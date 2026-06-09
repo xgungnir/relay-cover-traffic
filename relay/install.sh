@@ -14,7 +14,6 @@ ENV_DIR="/etc/relay-cover-traffic"
 ENV_FILE="$ENV_DIR/relay.env"
 ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 ENV_EXAMPLE="$SCRIPT_DIR/../config/relay.env.example"
-REALM_CONFIG="/etc/realm/config.toml"
 
 require_config_env_file "$ENV_SOURCE" "$ENV_EXAMPLE"
 
@@ -36,10 +35,6 @@ env_has_placeholders() {
   grep -Eq 'relay-backend\.example\.com|receiver1\.example\.com|1\.2\.3\.4|2001:db8' "$ENV_SOURCE"
 }
 
-realm_config_is_ready() {
-  [[ -f "$REALM_CONFIG" ]] && grep -q '[^[:space:]]' "$REALM_CONFIG"
-}
-
 run_step() {
   local script_name="${1:?script name is required}"
 
@@ -59,14 +54,7 @@ sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 
 run_step install-deps.sh
 
-run_step setup-realm-service.sh
-
-if ! realm_config_is_ready; then
-  log "WARN" "$REALM_CONFIG is empty or missing"
-  log "WARN" "edit $REALM_CONFIG, then run: sudo systemctl restart realm.service"
-  log "WARN" "after realm config is ready, rerun: sudo ./install.sh"
-  exit 0
-fi
+run_step setup-sb-service.sh
 
 run_step install-qos-service.sh
 run_step install-cover-sender.sh

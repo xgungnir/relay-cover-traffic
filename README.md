@@ -1,9 +1,9 @@
 # Relay Cover Traffic
 
-Debian 12+ shell scripts for relay nodes and receiver nodes that run low-priority TCP/UDP iperf3 cover traffic alongside a `realm` relay path.
+Debian 12+ shell scripts for relay nodes and receiver nodes that run low-priority TCP/UDP iperf3 cover traffic alongside a manually configured `sing-box` relay path.
 
 ```text
-Client --> relay node:realm.service --> receiver node:sing-box service(s)
+Client --> relay node:sing-box.service --> receiver node:sing-box service(s)
                               \
                                \--low-priority cover traffic--> receiver node:iperf3 receiver(s)
 ```
@@ -15,8 +15,12 @@ The receiver should usually be installed first. Multiple relay nodes can send co
 Relay side:
 
 - Installs relay dependencies.
-- Installs or upgrades `/usr/local/bin/realm` from `REALM_TARBALL_URL` when needed.
-- Creates `/etc/realm/config.toml` only when missing, and never overwrites a non-empty config.
+- Installs the `sing-box` package from the Sagernet APT repo when needed.
+- Adds the Sagernet APT key/repo if missing, even when `sing-box` is already installed.
+- Enables the packaged `sing-box.service`.
+- Checks `/etc/sing-box/config.json` with `sing-box check -D /var/lib/sing-box -C /etc/sing-box`.
+- Restarts `sing-box.service` only after the config check passes.
+- Does not generate or overwrite `/etc/sing-box/config.json`.
 - Installs `relay-cover-qos.service`.
 - Installs `relay-cover-sender.service` and `relay-cover-sender.timer`.
 
@@ -34,7 +38,9 @@ Receiver side:
 
 ```text
 relay-cover-traffic/
-├── common/lib.sh
+├── common/
+│   ├── lib.sh
+│   └── sb.sh
 ├── config/
 │   ├── relay.env.example
 │   ├── relay.env
@@ -43,7 +49,7 @@ relay-cover-traffic/
 ├── relay/
 │   ├── install.sh
 │   ├── install-deps.sh
-│   ├── setup-realm-service.sh
+│   ├── setup-sb-service.sh
 │   ├── setup-qos.sh
 │   ├── install-qos-service.sh
 │   ├── install-cover-sender.sh
@@ -94,11 +100,16 @@ cd relay
 sudo ./install.sh
 ```
 
-If `/etc/realm/config.toml` is missing, relay `install.sh` creates an empty file and stops after installing `realm`. Edit it, restart `realm.service`, then rerun the installer:
+Relay `install.sh` installs and enables `sing-box.service`, then requires `/etc/sing-box/config.json` to exist, be non-empty, and pass:
 
 ```bash
-sudo nano /etc/realm/config.toml
-sudo systemctl restart realm.service
+sing-box check -D /var/lib/sing-box -C /etc/sing-box
+```
+
+If the config is missing, empty, or invalid, the relay installer stops before installing QoS and cover sender units. Create or fix `/etc/sing-box/config.json`, then rerun:
+
+```bash
+cd relay
 sudo ./install.sh
 ```
 
@@ -106,12 +117,71 @@ The installer refuses to continue when env files still contain example placehold
 
 On first dependency install, Debian's `iperf3` package can emit maintainer-script messages such as `deb-systemd-helper was not called from dpkg` or `Failed to stop iperf3.service: Unit iperf3.service not loaded`. The installer filters those known harmless lines during dependency install and default `iperf3` service cleanup; if `apt-get` really fails, the script still stops.
 
+## Relay sing-box Config Example
+
+This is only a route structure example. The real relay inbound/outbound types, ports, and remote targets are part of your own sing-box design. Project scripts never generate or overwrite `/etc/sing-box/config.json`.
+
+```json
+{
+  "log": {
+    "level": "warn"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "local",
+        "tag": "local"
+      }
+    ],
+    "final": "local"
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1081
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-out",
+      "server": "relay-backend.example.com",
+      "server_port": 1080
+    },
+    {
+      "type": "direct",
+      "tag": "direct",
+      "domain_resolver": {
+        "server": "local",
+        "strategy": "prefer_ipv4"
+      }
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "inbound": [
+          "socks-in"
+        ],
+        "action": "route",
+        "outbound": "socks-out"
+      }
+    ],
+    "final": "direct"
+  }
+}
+```
+
+Keep `RELAY_QOS_TARGETS` aligned with the effective remote endpoints configured manually in `/etc/sing-box/config.json`, because relay QoS classification uses those host:port values.
+
 ## Services
 
 Relay:
 
 ```text
-realm.service
+sing-box.service
 relay-cover-qos.service
 relay-cover-sender.service
 relay-cover-sender.timer
@@ -120,6 +190,7 @@ relay-cover-sender.timer
 Receiver:
 
 ```text
+sing-box.service
 relay-cover-receiver-v4.service
 relay-cover-receiver-v6.service
 ```
@@ -203,11 +274,8 @@ Edit `config/relay.env` or `config/receiver.env`, then run the matching repo-sid
 Relay changes:
 
 ```text
-REALM_TARBALL_URL
-  cd relay && sudo ./setup-realm-service.sh
-
-/etc/realm/config.toml
-  sudo systemctl restart realm.service
+/etc/sing-box/config.json
+  cd relay && sudo ./setup-sb-service.sh
 
 RELAY_QOS_TARGETS, TC_TOTAL_RATE, TC_RELAY_*, TC_COVER_*, TC_DEFAULT_*
   cd relay && sudo ./setup-qos.sh
@@ -277,6 +345,8 @@ sudo ./uninstall.sh
 sudo ./uninstall.sh --purge
 ```
 
+Relay uninstall disables project cover/qos units and `sing-box.service`. It preserves `/etc/sing-box/config.json` and the `sing-box` package.
+
 Receiver uninstall disables `sing-box.service` and removes the project firewall rules from the active ruleset. For iptables legacy it saves the removal through `netfilter-persistent` when available. For nftables it removes the project include file and the marked include block that this project added to `/etc/nftables.conf`.
 
-`--purge` removes the role env file under `/etc/relay-cover-traffic`. Non-empty `/etc/realm/config.toml`, `/usr/local/bin/realm`, the sing-box package, firewall persistence packages, and `/etc/sing-box/config.json` are preserved.
+`--purge` removes the role env file under `/etc/relay-cover-traffic`. The `sing-box` package, firewall persistence packages, and `/etc/sing-box/config.json` are preserved.
