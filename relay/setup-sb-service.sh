@@ -22,6 +22,7 @@ ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
 SING_BOX_CONFIG_DIR="/etc/sing-box"
 SING_BOX_CONFIG="$SING_BOX_CONFIG_DIR/config.json"
 SING_BOX_DATA_DIR="/var/lib/sing-box"
+config_ready_before_install=0
 
 require_root
 require_cmd install systemctl
@@ -29,8 +30,21 @@ sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 
 export DEBIAN_FRONTEND=noninteractive
 
+if sing_box_config_ready "$SING_BOX_CONFIG"; then
+  config_ready_before_install=1
+fi
+
 install_sing_box_from_sagernet_repo
 enable_sing_box_service
+
+if [[ "$config_ready_before_install" -eq 0 ]]; then
+  log "WARN" "$SING_BOX_CONFIG was missing or empty before sing-box package setup"
+  log "WARN" "not checking or restarting sing-box.service with the packaged default config"
+  log "WARN" "edit $SING_BOX_CONFIG, then run: sudo systemctl restart sing-box.service"
+  systemctl stop sing-box.service 2>/dev/null || true
+  log "INFO" "sing-box.service setup complete"
+  exit 0
+fi
 
 if ! sing_box_config_ready "$SING_BOX_CONFIG"; then
   log "WARN" "$SING_BOX_CONFIG is missing or empty"

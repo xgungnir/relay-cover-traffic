@@ -100,18 +100,19 @@ cd relay
 sudo ./install.sh
 ```
 
-Relay `install.sh` installs and enables `sing-box.service`, then requires `/etc/sing-box/config.json` to exist, be non-empty, and pass:
+Relay `install.sh` installs the `sing-box` package and enables `sing-box.service`. If `/etc/sing-box/config.json` already existed and was non-empty before package setup, the installer verifies it with:
 
 ```bash
 sing-box check -D /var/lib/sing-box -C /etc/sing-box
 ```
 
-If the config is missing, empty, or invalid, the relay installer stops before installing QoS and cover sender units. Create or fix `/etc/sing-box/config.json`, then rerun:
+When that check passes, the installer restarts `sing-box.service`. If no config was present before package setup, the installer treats sing-box config as pending: it enables `sing-box.service`, does not check or restart the packaged default config, and stops the service in case the package started it. Edit `/etc/sing-box/config.json`, then start the real relay config:
 
 ```bash
-cd relay
-sudo ./install.sh
+sudo systemctl restart sing-box.service
 ```
+
+You can also run `cd relay && sudo ./setup-sb-service.sh` after editing the config to run the project check and restart path.
 
 The installer refuses to continue when env files still contain example placeholder addresses.
 
