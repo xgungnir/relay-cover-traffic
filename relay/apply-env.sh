@@ -43,6 +43,11 @@ if env_has_placeholders; then
   die "$ENV_SOURCE still contains example placeholder targets; edit it before rerunning apply-env.sh"
 fi
 
+if service_is_running relay-cover-sender.timer; then
+  log "INFO" "stopping relay-cover-sender.timer before applying new env"
+  systemctl stop relay-cover-sender.timer
+fi
+
 if service_is_running relay-cover-sender.service; then
   sender_was_running=1
   log "INFO" "stopping active relay-cover-sender.service before applying new env"
@@ -60,8 +65,8 @@ run_step install-qos-service.sh
 run_step install-cover-sender.sh
 
 if [[ "$sender_was_running" -eq 1 ]]; then
-  log "INFO" "restarting relay-cover-sender.service with updated env"
-  systemctl start relay-cover-sender.service
+  log "INFO" "queueing relay-cover-sender.service restart with updated env"
+  systemctl start --no-block relay-cover-sender.service
 fi
 
 log "INFO" "relay env changes applied"
