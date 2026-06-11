@@ -16,7 +16,7 @@ SERVICE_FILE="/etc/systemd/system/relay-cover-sender.service"
 TIMER_FILE="/etc/systemd/system/relay-cover-sender.timer"
 
 require_root
-require_cmd iperf3 systemctl install tr
+require_cmd iperf3 systemctl install timeout tr
 sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_TARGETS COVER_RATE COVER_MIN_SECONDS COVER_MAX_SECONDS COVER_RETRY_DELAY_SECONDS COVER_MAX_SEGMENT_SECONDS

@@ -114,6 +114,7 @@ run_iperf3_process() {
   local host="${2:?host is required}"
   local port="${3:?port is required}"
   local segment_duration="${4:?segment duration is required}"
+  local hard_timeout
   local -a args
 
   args=(-c "$host" -b "$effective_rate" -t "$segment_duration" -p "$port" --connect-timeout "$connect_timeout_ms")
@@ -122,11 +123,12 @@ run_iperf3_process() {
     args=(-c "$host" -u -b "$effective_rate" -l 1200 -t "$segment_duration" -p "$port" --connect-timeout "$connect_timeout_ms")
   fi
 
-  iperf3 "${args[@]}"
+  hard_timeout=$((segment_duration + 10#$COVER_RETRY_DELAY_SECONDS + 15))
+  timeout --kill-after=5s "$hard_timeout" iperf3 "${args[@]}"
 }
 
 require_root
-require_cmd date flock iperf3 sleep tr
+require_cmd date flock iperf3 sleep timeout tr
 if [[ -f "$ENV_SOURCE" ]]; then
   sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 fi
