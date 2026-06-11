@@ -214,7 +214,7 @@ Receiver DNS check/repair:
 
 ## Cover Sender
 
-`relay-cover-sender.timer` starts `/usr/local/sbin/relay-cover-sender-hourly.sh` hourly. Each run chooses a random delay, random total duration, random target order, and per-target segments capped by `COVER_MAX_SEGMENT_SECONDS`.
+`relay-cover-sender.timer` starts `/usr/local/sbin/relay-cover-sender-hourly.sh` hourly. Each run chooses a random delay, a random total duration shared across all cover targets, a random target order, and a random duration split for each target. Long target windows are split into iperf3 processes capped by `COVER_MAX_SEGMENT_SECONDS`.
 
 `COVER_TYPE` controls each individual iperf3 process:
 

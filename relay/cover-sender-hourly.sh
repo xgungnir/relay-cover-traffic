@@ -20,6 +20,7 @@ MAX_COVER_BPS=5000000
 
 target_hosts=()
 target_ports=()
+target_durations=()
 
 random_between() {
   local min="${1:?min is required}"
@@ -82,6 +83,70 @@ target_order_string() {
   done
 
   printf '%s\n' "$output"
+}
+
+target_duration_string() {
+  local count="${#target_hosts[@]}"
+  local i
+  local sep=""
+  local output=""
+
+  for ((i = 0; i < count; i++)); do
+    output="${output}${sep}$(target_display "${target_hosts[$i]}" "${target_ports[$i]}")=${target_durations[$i]}s"
+    sep=", "
+  done
+
+  printf '%s\n' "$output"
+}
+
+allocate_target_durations() {
+  local total_duration="${1:?duration is required}"
+  local cut
+  local exists
+  local existing_cut
+  local i
+  local j
+  local prev=0
+  local tmp
+  local -a cuts=()
+
+  target_durations=()
+
+  if [[ "$target_count" -eq 1 ]]; then
+    target_durations=("$total_duration")
+    return 0
+  fi
+
+  while [[ "${#cuts[@]}" -lt "$((target_count - 1))" ]]; do
+    cut="$(random_between 1 "$((total_duration - 1))")"
+    exists=0
+    for existing_cut in "${cuts[@]}"; do
+      if [[ "$existing_cut" -eq "$cut" ]]; then
+        exists=1
+        break
+      fi
+    done
+
+    if [[ "$exists" -eq 0 ]]; then
+      cuts+=("$cut")
+    fi
+  done
+
+  for ((i = 0; i < ${#cuts[@]}; i++)); do
+    for ((j = i + 1; j < ${#cuts[@]}; j++)); do
+      if [[ "${cuts[$j]}" -lt "${cuts[$i]}" ]]; then
+        tmp="${cuts[$i]}"
+        cuts[$i]="${cuts[$j]}"
+        cuts[$j]="$tmp"
+      fi
+    done
+  done
+
+  cuts+=("$total_duration")
+  for cut in "${cuts[@]}"; do
+    target_durations+=("$((cut - prev))")
+    prev="$cut"
+  done
 }
 
 validate_cover_type() {
@@ -184,11 +249,11 @@ else
 fi
 
 shuffle_targets
-base_duration=$((duration / target_count))
-extra_seconds=$((duration % target_count))
+allocate_target_durations "$duration"
 
 log "INFO" "cover traffic selected: delay=${delay}s total_duration=${duration}s rate=${effective_rate} type=${COVER_TYPE} target_count=${target_count}"
 log "INFO" "cover target order: $(target_order_string)"
+log "INFO" "cover target durations: $(target_duration_string)"
 sleep "$delay"
 
 run_target_until_deadline() {
@@ -264,10 +329,7 @@ run_target_until_deadline() {
 
 failed=0
 for ((i = 0; i < target_count; i++)); do
-  run_duration="$base_duration"
-  if [[ "$i" -lt "$extra_seconds" ]]; then
-    run_duration=$((run_duration + 1))
-  fi
+  run_duration="${target_durations[$i]}"
 
   if run_target_until_deadline "${target_hosts[$i]}" "${target_ports[$i]}" "$run_duration"; then
     :
