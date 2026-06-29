@@ -108,7 +108,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/iperf3 --server --bind ${bind_address} --port ${COVER_RECEIVER_PORT} --interval 0 --idle-timeout ${COVER_RECEIVER_IDLE_TIMEOUT_SECONDS}
+ExecStart=/usr/bin/iperf3 --server --bind ${bind_address} --port ${COVER_RECEIVER_PORT} --interval 0 --idle-timeout 300
 SuccessExitStatus=1
 Restart=always
 RestartSec=3
@@ -122,7 +122,6 @@ UNIT
 write_watchdog_units() {
   log "INFO" "installing iperf3 receiver watchdog"
   install -m 0755 "$WATCHDOG_SCRIPT_SOURCE" "$WATCHDOG_SCRIPT"
-  install_file "$SCRIPT_DIR/../common/lib.sh" "/usr/local/lib/relay-cover-traffic/lib.sh" "0644"
 
   cat >"$WATCHDOG_SERVICE_FILE" <<UNIT
 [Unit]
@@ -139,8 +138,8 @@ UNIT
 Description=Periodically check relay cover traffic receivers
 
 [Timer]
-OnBootSec=${COVER_RECEIVER_WATCHDOG_INTERVAL_SECONDS}s
-OnUnitInactiveSec=${COVER_RECEIVER_WATCHDOG_INTERVAL_SECONDS}s
+OnBootSec=60s
+OnUnitInactiveSec=60s
 AccuracySec=1s
 
 [Install]
@@ -156,27 +155,6 @@ sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_RECEIVER_PORT
 validate_port "$COVER_RECEIVER_PORT" || die "invalid COVER_RECEIVER_PORT: $COVER_RECEIVER_PORT"
-COVER_RECEIVER_IDLE_TIMEOUT_SECONDS="${COVER_RECEIVER_IDLE_TIMEOUT_SECONDS:-300}"
-COVER_RECEIVER_WATCHDOG_ENABLED="${COVER_RECEIVER_WATCHDOG_ENABLED:-true}"
-COVER_RECEIVER_WATCHDOG_INTERVAL_SECONDS="${COVER_RECEIVER_WATCHDOG_INTERVAL_SECONDS:-60}"
-COVER_RECEIVER_STUCK_CONFIRM_SECONDS="${COVER_RECEIVER_STUCK_CONFIRM_SECONDS:-10}"
-COVER_RECEIVER_STUCK_CONNECTION_THRESHOLD="${COVER_RECEIVER_STUCK_CONNECTION_THRESHOLD:-1}"
-
-is_positive_int "$COVER_RECEIVER_IDLE_TIMEOUT_SECONDS" || \
-  die "COVER_RECEIVER_IDLE_TIMEOUT_SECONDS must be a positive integer"
-is_positive_int "$COVER_RECEIVER_WATCHDOG_INTERVAL_SECONDS" || \
-  die "COVER_RECEIVER_WATCHDOG_INTERVAL_SECONDS must be a positive integer"
-is_positive_int "$COVER_RECEIVER_STUCK_CONFIRM_SECONDS" || \
-  die "COVER_RECEIVER_STUCK_CONFIRM_SECONDS must be a positive integer"
-is_positive_int "$COVER_RECEIVER_STUCK_CONNECTION_THRESHOLD" || \
-  die "COVER_RECEIVER_STUCK_CONNECTION_THRESHOLD must be a positive integer"
-case "$COVER_RECEIVER_WATCHDOG_ENABLED" in
-  true|false)
-    ;;
-  *)
-    die "COVER_RECEIVER_WATCHDOG_ENABLED must be true or false"
-    ;;
-esac
 
 IPERF3_HELP="$(iperf3 --help 2>&1)"
 grep -q -- '--idle-timeout' <<<"$IPERF3_HELP" || \
@@ -232,12 +210,7 @@ if [[ -n "$COVER_BIND_ADDRESS_V6_EFFECTIVE" ]]; then
   write_receiver_unit "$UNIT_FILE_V6" "IPv6" "$COVER_BIND_ADDRESS_V6_EFFECTIVE"
 fi
 
-if [[ "$COVER_RECEIVER_WATCHDOG_ENABLED" == "true" ]]; then
-  write_watchdog_units
-else
-  rm -f "$WATCHDOG_SCRIPT"
-  log "INFO" "iperf3 receiver watchdog is disabled"
-fi
+write_watchdog_units
 
 systemctl daemon-reload
 
@@ -249,9 +222,7 @@ if [[ -n "$COVER_BIND_ADDRESS_V6_EFFECTIVE" ]]; then
   systemctl enable --now relay-cover-receiver-v6.service
 fi
 
-if [[ "$COVER_RECEIVER_WATCHDOG_ENABLED" == "true" ]]; then
-  systemctl enable --now relay-cover-receiver-watchdog.timer
-fi
+systemctl enable --now relay-cover-receiver-watchdog.timer
 
 systemctl reset-failed relay-cover-receiver.service 2>/dev/null || true
 systemctl reset-failed \
