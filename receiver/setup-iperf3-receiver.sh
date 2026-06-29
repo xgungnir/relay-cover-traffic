@@ -19,6 +19,7 @@ WATCHDOG_SCRIPT_SOURCE="$SCRIPT_DIR/watch-iperf3-receiver.sh"
 WATCHDOG_SCRIPT="/usr/local/sbin/relay-cover-receiver-watchdog.sh"
 WATCHDOG_SERVICE_FILE="/etc/systemd/system/relay-cover-receiver-watchdog.service"
 WATCHDOG_TIMER_FILE="/etc/systemd/system/relay-cover-receiver-watchdog.timer"
+IPERF3_HELP=""
 
 interface_is_excluded_for_iperf3_bind() {
   local dev="${1:?interface name is required}"
@@ -177,7 +178,8 @@ case "$COVER_RECEIVER_WATCHDOG_ENABLED" in
     ;;
 esac
 
-iperf3 --help 2>&1 | grep -q -- '--idle-timeout' || \
+IPERF3_HELP="$(iperf3 --help 2>&1)"
+grep -q -- '--idle-timeout' <<<"$IPERF3_HELP" || \
   die "installed iperf3 does not support --idle-timeout"
 
 COVER_BIND_ADDRESS_V4_EFFECTIVE="$(resolve_iperf3_bind_address_v4 || true)"
