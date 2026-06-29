@@ -195,7 +195,19 @@ Receiver:
 sing-box.service
 relay-cover-receiver-v4.service
 relay-cover-receiver-v6.service
+relay-cover-receiver-watchdog.timer
 ```
+
+The receiver uses two recovery layers for stuck iperf3 sessions:
+
+- `--idle-timeout` lets iperf3 restart its idle server loop.
+- `relay-cover-receiver-watchdog.timer` detects persistent `CLOSE-WAIT`
+  control connections and restarts only the affected IPv4 or IPv6 unit.
+
+The watchdog samples socket state twice before restarting a receiver. Configure
+its interval, confirmation delay, and threshold with the
+`COVER_RECEIVER_WATCHDOG_*` values in `config/receiver.env`. A normal active
+test without persistent `CLOSE-WAIT` connections is not restarted.
 
 Status:
 

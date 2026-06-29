@@ -121,6 +121,8 @@ systemctl disable --now \
   relay-cover-receiver.service \
   relay-cover-receiver-v4.service \
   relay-cover-receiver-v6.service \
+  relay-cover-receiver-watchdog.service \
+  relay-cover-receiver-watchdog.timer \
   iperf3-dummy-receiver.service \
   iperf3-dummy-receiver-v4.service \
   iperf3-dummy-receiver-v6.service 2>/dev/null || true
@@ -142,11 +144,15 @@ rm -f \
   /etc/systemd/system/relay-cover-receiver.service \
   /etc/systemd/system/relay-cover-receiver-v4.service \
   /etc/systemd/system/relay-cover-receiver-v6.service \
+  /etc/systemd/system/relay-cover-receiver-watchdog.service \
+  /etc/systemd/system/relay-cover-receiver-watchdog.timer \
   /etc/systemd/system/iperf3-dummy-receiver.service \
   /etc/systemd/system/iperf3-dummy-receiver-v4.service \
   /etc/systemd/system/iperf3-dummy-receiver-v6.service \
   "$NFT_INCLUDE_FILE" \
   "$LEGACY_NFT_INCLUDE_FILE"
+
+rm -f /usr/local/sbin/relay-cover-receiver-watchdog.sh
 
 if [[ "$PURGE" == "true" ]]; then
   log "WARN" "purging $ENV_FILE"
@@ -161,6 +167,8 @@ systemctl reset-failed \
   relay-cover-receiver.service \
   relay-cover-receiver-v4.service \
   relay-cover-receiver-v6.service \
+  relay-cover-receiver-watchdog.service \
+  relay-cover-receiver-watchdog.timer \
   iperf3-dummy-receiver.service \
   iperf3-dummy-receiver-v4.service \
   iperf3-dummy-receiver-v6.service 2>/dev/null || true

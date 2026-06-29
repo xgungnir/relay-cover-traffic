@@ -55,7 +55,7 @@ require_root
 sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_RECEIVER_PORT
-require_cmd systemctl grep ip ss journalctl
+require_cmd systemctl grep ip ss journalctl awk sort
 
 for unit in "${LEGACY_UNITS[@]}"; do
   if systemctl cat "$unit" >/dev/null 2>&1; then
@@ -65,8 +65,18 @@ done
 
 show_receiver_unit_status relay-cover-receiver-v4.service IPv4
 show_receiver_unit_status relay-cover-receiver-v6.service IPv6
+if unit_exists relay-cover-receiver-watchdog.timer; then
+  systemctl status relay-cover-receiver-watchdog.timer --no-pager || true
+  systemctl status relay-cover-receiver-watchdog.service --no-pager || true
+else
+  log "INFO" "relay-cover-receiver-watchdog.timer is not installed"
+fi
 ip -br addr 2>/dev/null | grep -vE '^(lo|warp|wg|tun|tailscale|docker|br-|virbr|veth)' || true
 ss -tulpn | grep "$COVER_RECEIVER_PORT" || true
+log "INFO" "receiver TCP socket state summary"
+ss -H -n -t "sport = :${COVER_RECEIVER_PORT}" 2>/dev/null |
+  awk '{ states[$1] += 1 } END { for (state in states) print state, states[state] }' |
+  sort || true
 
 if command -v nft >/dev/null 2>&1; then
   nft list table inet "$NFT_TABLE" 2>/dev/null | grep "$COVER_RECEIVER_PORT" -C 3 || true
@@ -89,6 +99,9 @@ if unit_exists relay-cover-receiver-v4.service; then
 fi
 if unit_exists relay-cover-receiver-v6.service; then
   show_current_activation_journal relay-cover-receiver-v6.service
+fi
+if unit_exists relay-cover-receiver-watchdog.service; then
+  journalctl -u relay-cover-receiver-watchdog.service -n 30 --no-pager || true
 fi
 
 if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' sing-box 2>/dev/null | grep -q 'install ok installed'; then
