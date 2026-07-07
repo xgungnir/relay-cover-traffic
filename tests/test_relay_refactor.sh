@@ -824,6 +824,8 @@ test_install_idempotent_and_units() {
 
   assert_file_contains "$service_file" "After=network-online.target" || return 1
   assert_file_not_contains "$service_file" "relay-cover-qos.service" || return 1
+  assert_file_contains "$service_file" "Type=exec" || return 1
+  assert_file_not_contains "$service_file" "Type=oneshot" || return 1
   assert_file_contains "$service_file" "RuntimeMaxSec=3600" || return 1
   assert_file_contains "$timer_file" "OnCalendar=hourly" || return 1
   assert_file_contains "$timer_file" "Persistent=true" || return 1

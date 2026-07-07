@@ -24,7 +24,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+Type=exec
 ExecStart=$INSTALLED_SCRIPT
 RuntimeMaxSec=3600
 SuccessExitStatus=SIGTERM SIGINT
