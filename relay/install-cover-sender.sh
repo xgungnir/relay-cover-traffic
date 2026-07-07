@@ -10,50 +10,30 @@ else
   exit 1
 fi
 
-ENV_FILE="/etc/relay-cover-traffic/relay.env"
-ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
-SERVICE_FILE="/etc/systemd/system/relay-cover-sender.service"
-TIMER_FILE="/etc/systemd/system/relay-cover-sender.timer"
+ENV_FILE="${RELAY_RUNTIME_ENV_FILE:-/etc/relay-cover-traffic/relay.env}"
+SERVICE_FILE="${RELAY_SENDER_SERVICE_FILE:-/etc/systemd/system/relay-cover-sender.service}"
+TIMER_FILE="${RELAY_SENDER_TIMER_FILE:-/etc/systemd/system/relay-cover-sender.timer}"
+INSTALLED_SCRIPT="${RELAY_SENDER_INSTALLED_SCRIPT:-/usr/local/sbin/relay-cover-sender-hourly.sh}"
+INSTALLED_LIB="${RELAY_SENDER_INSTALLED_LIB:-/usr/local/lib/relay-cover-traffic/lib.sh}"
 
-require_root
-require_cmd iperf3 systemctl install timeout tr
-sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
-load_env_file "$ENV_FILE"
-require_env COVER_TARGETS COVER_RATE COVER_MIN_SECONDS COVER_MAX_SECONDS COVER_RETRY_DELAY_SECONDS COVER_MAX_SEGMENT_SECONDS
-COVER_TYPE="${COVER_TYPE:-auto}"
-parse_target_list "$COVER_TARGETS" >/dev/null
-is_positive_int "$COVER_MIN_SECONDS" || die "COVER_MIN_SECONDS must be a positive integer"
-is_positive_int "$COVER_MAX_SECONDS" || die "COVER_MAX_SECONDS must be a positive integer"
-is_positive_int "$COVER_RETRY_DELAY_SECONDS" || die "COVER_RETRY_DELAY_SECONDS must be a positive integer"
-is_positive_int "$COVER_MAX_SEGMENT_SECONDS" || die "COVER_MAX_SEGMENT_SECONDS must be a positive integer"
-case "$COVER_TYPE" in
-  auto|udp|tcp)
-    ;;
-  *)
-    die "COVER_TYPE must be one of: auto, udp, tcp"
-    ;;
-esac
-
-log "INFO" "installing cover sender helper script"
-install_file "$SCRIPT_DIR/cover-sender-hourly.sh" "/usr/local/sbin/relay-cover-sender-hourly.sh" "0755"
-install_file "$SCRIPT_DIR/../common/lib.sh" "/usr/local/lib/relay-cover-traffic/lib.sh" "0644"
-
-log "INFO" "writing systemd service to $SERVICE_FILE"
-cat >"$SERVICE_FILE" <<'SERVICE'
+write_sender_service() {
+  cat >"$SERVICE_FILE" <<SERVICE
 [Unit]
 Description=Run randomized hourly relay cover traffic
-After=network-online.target relay-cover-qos.service
-Wants=network-online.target relay-cover-qos.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/sbin/relay-cover-sender-hourly.sh
+ExecStart=$INSTALLED_SCRIPT
+RuntimeMaxSec=3600
 SuccessExitStatus=SIGTERM SIGINT
 SERVICE
-chmod 0644 "$SERVICE_FILE"
+  chmod 0644 "$SERVICE_FILE"
+}
 
-log "INFO" "writing systemd timer to $TIMER_FILE"
-cat >"$TIMER_FILE" <<'TIMER'
+write_sender_timer() {
+  cat >"$TIMER_FILE" <<'TIMER'
 [Unit]
 Description=Hourly randomized relay cover traffic timer
 
@@ -66,10 +46,34 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 TIMER
-chmod 0644 "$TIMER_FILE"
+  chmod 0644 "$TIMER_FILE"
+}
 
-systemctl daemon-reload
-systemctl reset-failed relay-cover-sender.service relay-cover-sender.timer 2>/dev/null || true
-systemctl enable --now relay-cover-sender.timer
+main() {
+  require_root
+  require_cmd systemctl install iperf3 grep
 
-log "INFO" "relay-cover-sender.timer installed and enabled"
+  load_and_validate_relay_env "$ENV_FILE" 1
+  require_relay_iperf3_capabilities
+
+  log "INFO" "installing relay cover sender helper"
+  install_file "$SCRIPT_DIR/cover-sender-hourly.sh" "$INSTALLED_SCRIPT" "0755"
+  install_file "$SCRIPT_DIR/../common/lib.sh" "$INSTALLED_LIB" "0644"
+
+  if [[ "${RELAY_TEST_FORCE_INSTALL_COVER_SENDER_FAIL:-0}" == "1" ]]; then
+    die "forced install-cover-sender failure for tests"
+  fi
+
+  log "INFO" "writing sender systemd unit: $SERVICE_FILE"
+  write_sender_service
+
+  log "INFO" "writing sender timer unit: $TIMER_FILE"
+  write_sender_timer
+
+  systemctl daemon-reload
+  systemctl reset-failed relay-cover-sender.service relay-cover-sender.timer 2>/dev/null || true
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

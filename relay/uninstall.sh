@@ -10,8 +10,7 @@ else
   exit 1
 fi
 
-ENV_FILE="/etc/relay-cover-traffic/relay.env"
-ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
+ENV_FILE="${RELAY_RUNTIME_ENV_FILE:-/etc/relay-cover-traffic/relay.env}"
 PURGE="false"
 
 case "${1:-}" in
@@ -25,70 +24,42 @@ case "${1:-}" in
     ;;
 esac
 
-require_root
-require_cmd systemctl rm
+main() {
+  require_root
+  require_cmd systemctl rm
+  require_no_legacy_relay_resources
 
-if [[ -f "$ENV_SOURCE" ]]; then
-  sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
+  log "INFO" "disabling relay cover sender units"
+  systemctl disable --now relay-cover-sender.timer 2>/dev/null || true
+  systemctl disable --now relay-cover-sender.service 2>/dev/null || true
+  systemctl disable --now iperf3-dummy-hourly.timer 2>/dev/null || true
+  systemctl disable --now iperf3-dummy-hourly.service 2>/dev/null || true
+
+  log "INFO" "removing relay sender units and helper files"
+  rm -f \
+    /etc/systemd/system/relay-cover-sender.service \
+    /etc/systemd/system/relay-cover-sender.timer \
+    /etc/systemd/system/iperf3-dummy-hourly.service \
+    /etc/systemd/system/iperf3-dummy-hourly.timer \
+    /usr/local/sbin/relay-cover-sender-hourly.sh \
+    /usr/local/sbin/dummy-sender-hourly.sh \
+    /usr/local/lib/relay-cover-traffic/lib.sh
+
+  rmdir /usr/local/lib/relay-cover-traffic 2>/dev/null || true
+
+  if [[ "$PURGE" == "true" ]]; then
+    log "WARN" "purging $ENV_FILE"
+    rm -f "$ENV_FILE"
+    rmdir /etc/relay-cover-traffic 2>/dev/null || true
+  else
+    log "INFO" "preserving $ENV_FILE"
+  fi
+
+  systemctl daemon-reload
+  systemctl reset-failed relay-cover-sender.service relay-cover-sender.timer iperf3-dummy-hourly.service iperf3-dummy-hourly.timer 2>/dev/null || true
+  log "INFO" "relay uninstall complete"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-if [[ -f "$ENV_FILE" ]]; then
-  load_env_file "$ENV_FILE"
-else
-  log "WARN" "$ENV_FILE not found; tc qdisc removal by EGRESS_DEV will be skipped"
-fi
-
-log "INFO" "disabling relay cover traffic systemd units"
-systemctl disable --now relay-cover-sender.timer 2>/dev/null || true
-systemctl disable --now relay-cover-sender.service 2>/dev/null || true
-systemctl disable --now relay-cover-qos.service 2>/dev/null || true
-systemctl disable --now iperf3-dummy-hourly.timer 2>/dev/null || true
-systemctl disable --now iperf3-dummy-hourly.service 2>/dev/null || true
-systemctl disable --now tc-qos.service 2>/dev/null || true
-
-log "INFO" "disabling sing-box.service"
-systemctl disable sing-box.service 2>/dev/null || true
-
-if [[ -n "${EGRESS_DEV:-}" ]] && command -v tc >/dev/null 2>&1; then
-  log "INFO" "removing tc root qdisc from $EGRESS_DEV if present"
-  tc qdisc del dev "$EGRESS_DEV" root 2>/dev/null || true
-fi
-
-log "INFO" "removing project units and installed helper scripts"
-rm -f \
-  /etc/systemd/system/relay-cover-sender.service \
-  /etc/systemd/system/relay-cover-sender.timer \
-  /etc/systemd/system/relay-cover-qos.service \
-  /etc/systemd/system/iperf3-dummy-hourly.service \
-  /etc/systemd/system/iperf3-dummy-hourly.timer \
-  /etc/systemd/system/tc-qos.service \
-  /usr/local/sbin/relay-cover-setup-qos.sh \
-  /usr/local/sbin/relay-cover-remove-qos.sh \
-  /usr/local/sbin/relay-cover-sender-hourly.sh \
-  /usr/local/sbin/setup-tc-qos.sh \
-  /usr/local/sbin/remove-tc-qos.sh \
-  /usr/local/sbin/dummy-sender-hourly.sh
-
-rm -f /usr/local/lib/relay-cover-traffic/lib.sh
-rmdir /usr/local/lib/relay-cover-traffic 2>/dev/null || true
-rm -f /usr/local/lib/vps-relay-dummy/lib.sh
-rmdir /usr/local/lib/vps-relay-dummy 2>/dev/null || true
-
-if [[ "$PURGE" == "true" ]]; then
-  log "WARN" "purging $ENV_FILE"
-  rm -f "$ENV_FILE"
-  rmdir /etc/relay-cover-traffic 2>/dev/null || true
-else
-  log "INFO" "preserving $ENV_FILE"
-fi
-
-systemctl daemon-reload
-systemctl reset-failed \
-  sing-box.service \
-  relay-cover-qos.service \
-  relay-cover-sender.service \
-  relay-cover-sender.timer \
-  tc-qos.service \
-  iperf3-dummy-hourly.service \
-  iperf3-dummy-hourly.timer 2>/dev/null || true
-log "INFO" "relay uninstall complete"

@@ -30,5 +30,5 @@ install_sing_box_from_sagernet_repo
 enable_sing_box_service
 
 log "WARN" "This project installs the sing-box package when needed, but it does not generate or overwrite $SING_BOX_CONFIG."
-log "WARN" "Please make sure your sing-box service is configured and listening on SING_BOX_SERVICE_PORT."
+log "WARN" "Please make sure your sing-box service is configured before relying on the downstream service."
 log "INFO" "receiver dependency setup complete"

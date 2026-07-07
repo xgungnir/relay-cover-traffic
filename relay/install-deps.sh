@@ -10,16 +10,21 @@ else
   exit 1
 fi
 
-require_root
-require_cmd apt-get systemctl
+main() {
+  require_root
+  require_cmd apt-get systemctl
 
-export DEBIAN_FRONTEND=noninteractive
+  export DEBIAN_FRONTEND=noninteractive
 
-log "INFO" "installing relay dependencies"
-apt-get update
-apt_get_install iperf3 iproute2 systemd ca-certificates curl jq util-linux
+  log "INFO" "installing relay dependencies"
+  apt-get update
+  apt_get_install iperf3 iproute2 systemd util-linux
 
-log "INFO" "disabling Debian's default iperf3 service on relay node"
-disable_default_iperf3_service
+  log "INFO" "disabling Debian's default iperf3 service on relay node"
+  disable_default_iperf3_service
+  log "INFO" "relay dependency setup complete"
+}
 
-log "INFO" "relay dependency setup complete"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

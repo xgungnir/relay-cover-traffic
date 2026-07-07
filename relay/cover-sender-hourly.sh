@@ -13,39 +13,51 @@ else
   exit 1
 fi
 
-ENV_FILE="/etc/relay-cover-traffic/relay.env"
-ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
-LOCK_FILE="/run/relay-cover-sender.lock"
-MAX_COVER_BPS=5000000
+ENV_FILE="${RELAY_RUNTIME_ENV_FILE:-/etc/relay-cover-traffic/relay.env}"
+LOCK_FILE="${RELAY_SENDER_LOCK_FILE:-/run/relay-cover-sender.lock}"
+readonly RETRY_DELAY_SECONDS=5
+readonly MAX_SEGMENT_SECONDS=30
+readonly CONNECT_TIMEOUT_MS=5000
+readonly MIN_TARGET_WINDOW_SECONDS=15
+readonly RUN_END_GUARD_SECONDS=30
+readonly PROCESS_KILL_GRACE_SECONDS=5
+readonly COVER_DSCP=1
+readonly BUSY_SAMPLE_SECONDS=2
 
 target_hosts=()
 target_ports=()
 target_durations=()
+target_results=()
+target_normal_seconds=()
+target_busy_seconds=()
+target_actual_seconds=()
 
 random_between() {
   local min="${1:?min is required}"
   local max="${2:?max is required}"
-  local span=$((max - min + 1))
-  local value=$(((RANDOM << 16) ^ RANDOM))
+  local span
+  local value
 
+  if [[ "$min" -eq "$max" ]]; then
+    printf '%s\n' "$min"
+    return 0
+  fi
+
+  span=$((max - min + 1))
+  value=$(((RANDOM << 16) ^ RANDOM))
   printf '%s\n' "$((min + (value % span)))"
 }
 
-target_display() {
-  local host="${1:?host is required}"
-  local port="${2:?port is required}"
-
-  if is_ipv6_literal "$host"; then
-    printf '[%s]:%s' "$host" "$port"
-  else
-    printf '%s:%s' "$host" "$port"
-  fi
+now_epoch() {
+  date +%s
 }
 
 load_targets() {
   local host
   local port
 
+  target_hosts=()
+  target_ports=()
   while IFS=$'\t' read -r host port; do
     target_hosts+=("$host")
     target_ports+=("$port")
@@ -61,11 +73,10 @@ shuffle_targets() {
 
   for ((i = count - 1; i > 0; i--)); do
     j="$(random_between 0 "$i")"
-
     tmp_host="${target_hosts[$i]}"
     tmp_port="${target_ports[$i]}"
-    target_hosts[i]="${target_hosts[j]}"
-    target_ports[i]="${target_ports[j]}"
+    target_hosts[i]="${target_hosts[$j]}"
+    target_ports[i]="${target_ports[$j]}"
     target_hosts[j]="$tmp_host"
     target_ports[j]="$tmp_port"
   done
@@ -86,7 +97,7 @@ target_order_string() {
 }
 
 target_duration_string() {
-  local count="${#target_hosts[@]}"
+  local count="${#target_durations[@]}"
   local i
   local sep=""
   local output=""
@@ -101,62 +112,24 @@ target_duration_string() {
 
 allocate_target_durations() {
   local total_duration="${1:?duration is required}"
-  local cut
-  local exists
-  local existing_cut
+  local target_count="${#target_hosts[@]}"
+  local remaining
+  local index
   local i
-  local j
-  local prev=0
-  local tmp
-  local -a cuts=()
 
   target_durations=()
+  remaining="$total_duration"
 
-  if [[ "$target_count" -eq 1 ]]; then
-    target_durations=("$total_duration")
-    return 0
-  fi
-
-  while [[ "${#cuts[@]}" -lt "$((target_count - 1))" ]]; do
-    cut="$(random_between 1 "$((total_duration - 1))")"
-    exists=0
-    for existing_cut in "${cuts[@]}"; do
-      if [[ "$existing_cut" -eq "$cut" ]]; then
-        exists=1
-        break
-      fi
-    done
-
-    if [[ "$exists" -eq 0 ]]; then
-      cuts+=("$cut")
-    fi
+  for ((i = 0; i < target_count; i++)); do
+    target_durations[i]="$MIN_TARGET_WINDOW_SECONDS"
+    remaining=$((remaining - MIN_TARGET_WINDOW_SECONDS))
   done
 
-  for ((i = 0; i < ${#cuts[@]}; i++)); do
-    for ((j = i + 1; j < ${#cuts[@]}; j++)); do
-      if [[ "${cuts[$j]}" -lt "${cuts[$i]}" ]]; then
-        tmp="${cuts[$i]}"
-        cuts[$i]="${cuts[$j]}"
-        cuts[$j]="$tmp"
-      fi
-    done
+  while ((remaining > 0)); do
+    index="$(random_between 0 "$((target_count - 1))")"
+    target_durations[index]=$((target_durations[index] + 1))
+    remaining=$((remaining - 1))
   done
-
-  cuts+=("$total_duration")
-  for cut in "${cuts[@]}"; do
-    target_durations+=("$((cut - prev))")
-    prev="$cut"
-  done
-}
-
-validate_cover_type() {
-  case "${COVER_TYPE:-}" in
-    auto|udp|tcp)
-      ;;
-    *)
-      die "COVER_TYPE must be one of: auto, udp, tcp"
-      ;;
-  esac
 }
 
 choose_cover_type() {
@@ -174,174 +147,255 @@ choose_cover_type() {
   esac
 }
 
-run_iperf3_process() {
+read_tx_bytes() {
+  local sys_class_net_root="${RELAY_SYS_CLASS_NET_ROOT:-/sys/class/net}"
+  local file="${sys_class_net_root}/$EGRESS_DEV/statistics/tx_bytes"
+  local value
+
+  [[ -r "$file" ]] || return 1
+  value="$(<"$file")"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$value"
+}
+
+sample_segment_rate() {
+  local tx_before
+  local tx_after
+  local bytes_delta
+  local bits_delta
+  local tx_rate_bps
+
+  tx_before="$(read_tx_bytes)" || return 1
+  sleep "$BUSY_SAMPLE_SECONDS"
+  tx_after="$(read_tx_bytes)" || return 1
+
+  uint_ge "$tx_after" "$tx_before" || return 1
+  bytes_delta="$((10#$tx_after - 10#$tx_before))"
+  bits_delta="$(uint_mul_small "$bytes_delta" 8)" || return 1
+  tx_rate_bps="$((10#$bits_delta / BUSY_SAMPLE_SECONDS))"
+
+  if uint_ge "$tx_rate_bps" "$RELAY_BUSY_THRESHOLD_BPS"; then
+    SEGMENT_RATE_BPS="$RELAY_BUSY_RATE_BPS"
+    SEGMENT_IS_BUSY=1
+  else
+    SEGMENT_RATE_BPS="$RELAY_COVER_RATE_BPS"
+    SEGMENT_IS_BUSY=0
+  fi
+}
+
+run_iperf3_segment() {
   local protocol="${1:?protocol is required}"
   local host="${2:?host is required}"
   local port="${3:?port is required}"
   local segment_duration="${4:?segment duration is required}"
+  local segment_rate_bps="${5:?segment rate is required}"
+  local start_epoch
+  local end_epoch
   local hard_timeout
   local -a args
 
-  args=(-c "$host" -b "$effective_rate" -t "$segment_duration" -p "$port" --connect-timeout "$connect_timeout_ms")
+  args=(
+    -c "$host"
+    -p "$port"
+    -b "$segment_rate_bps"
+    --fq-rate "$segment_rate_bps"
+    -t "$segment_duration"
+    --bind-dev "$EGRESS_DEV"
+    --dscp "$COVER_DSCP"
+    --connect-timeout "$CONNECT_TIMEOUT_MS"
+  )
 
   if [[ "$protocol" == "udp" ]]; then
-    args=(-c "$host" -u -b "$effective_rate" -l 1200 -t "$segment_duration" -p "$port" --connect-timeout "$connect_timeout_ms")
+    args=(-u -l 1200 "${args[@]}")
   fi
 
-  hard_timeout=$((segment_duration + 10#$COVER_RETRY_DELAY_SECONDS + 15))
-  timeout --kill-after=5s "$hard_timeout" iperf3 "${args[@]}"
+  hard_timeout=$((segment_duration + PROCESS_KILL_GRACE_SECONDS + 15))
+  log "INFO" "segment start iface=$EGRESS_DEV target=$(target_display "$host" "$port") protocol=$protocol planned_seconds=$segment_duration segment_rate_bps=$segment_rate_bps busy=$SEGMENT_IS_BUSY dscp=$COVER_DSCP"
+  log "INFO" "segment args: iperf3 ${args[*]}"
+  start_epoch="$(now_epoch)"
+  if timeout --kill-after="${PROCESS_KILL_GRACE_SECONDS}s" "${hard_timeout}s" iperf3 "${args[@]}"; then
+    SEGMENT_EXIT_CODE=0
+  else
+    SEGMENT_EXIT_CODE=$?
+  fi
+  end_epoch="$(now_epoch)"
+  SEGMENT_ACTUAL_SECONDS=$((end_epoch - start_epoch))
+  if ((SEGMENT_ACTUAL_SECONDS < 0)); then
+    SEGMENT_ACTUAL_SECONDS=0
+  fi
 }
 
-require_root
-require_cmd date flock iperf3 sleep timeout tr
-if [[ -f "$ENV_SOURCE" ]]; then
-  sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
-fi
-load_env_file "$ENV_FILE"
-require_env COVER_TARGETS COVER_RATE COVER_MIN_SECONDS COVER_MAX_SECONDS COVER_RETRY_DELAY_SECONDS COVER_MAX_SEGMENT_SECONDS
-COVER_TYPE="${COVER_TYPE:-auto}"
-validate_cover_type
-load_targets
-
-exec 9>"$LOCK_FILE"
-if ! flock -n 9; then
-  log "INFO" "another cover sender run is already active; exiting"
-  exit 0
-fi
-
-is_positive_int "$COVER_MIN_SECONDS" || die "COVER_MIN_SECONDS must be a positive integer"
-is_positive_int "$COVER_MAX_SECONDS" || die "COVER_MAX_SECONDS must be a positive integer"
-is_positive_int "$COVER_RETRY_DELAY_SECONDS" || die "COVER_RETRY_DELAY_SECONDS must be a positive integer"
-is_positive_int "$COVER_MAX_SEGMENT_SECONDS" || die "COVER_MAX_SEGMENT_SECONDS must be a positive integer"
-
-target_count="${#target_hosts[@]}"
-if [[ "$COVER_MAX_SECONDS" -gt 3600 ]]; then
-  die "COVER_MAX_SECONDS must be <= 3600"
-fi
-
-if [[ "$COVER_MIN_SECONDS" -gt "$COVER_MAX_SECONDS" ]]; then
-  die "COVER_MIN_SECONDS must be <= COVER_MAX_SECONDS"
-fi
-
-if [[ "$COVER_MAX_SECONDS" -lt "$target_count" ]]; then
-  die "COVER_MAX_SECONDS must be at least the number of COVER_TARGETS ($target_count)"
-fi
-
-effective_rate="$COVER_RATE"
-cover_rate_bps="$(rate_to_bps "$COVER_RATE")" || die "invalid COVER_RATE: $COVER_RATE"
-if [[ "${ALLOW_COVER_RATE_ABOVE_5M:-false}" != "true" && "$cover_rate_bps" -gt "$MAX_COVER_BPS" ]]; then
-  log "WARN" "COVER_RATE=$COVER_RATE is above 5 Mbps; capping this run at 5M"
-  effective_rate="5M"
-fi
-connect_timeout_ms=$((10#$COVER_RETRY_DELAY_SECONDS * 1000))
-
-effective_min="$COVER_MIN_SECONDS"
-if [[ "$effective_min" -lt "$target_count" ]]; then
-  log "WARN" "COVER_MIN_SECONDS=$COVER_MIN_SECONDS is lower than target count; using ${target_count}s minimum for this run"
-  effective_min="$target_count"
-fi
-
-duration="$(random_between "$effective_min" "$COVER_MAX_SECONDS")"
-if [[ "$duration" -eq 3600 ]]; then
-  delay=0
-else
-  delay="$(random_between 0 "$((3600 - duration))")"
-fi
-
-shuffle_targets
-allocate_target_durations "$duration"
-
-log "INFO" "cover traffic selected: delay=${delay}s total_duration=${duration}s rate=${effective_rate} type=${COVER_TYPE} target_count=${target_count}"
-log "INFO" "cover target order: $(target_order_string)"
-log "INFO" "cover target durations: $(target_duration_string)"
-sleep "$delay"
-
-run_target_until_deadline() {
-  local host="${1:?host is required}"
-  local port="${2:?port is required}"
-  local allocated_duration="${3:?duration is required}"
-  local target
-  local deadline
+sleep_until_deadline() {
+  local deadline_epoch="${1:?deadline is required}"
+  local delay_seconds="${2:?delay is required}"
   local now
   local remaining
-  local segment_duration
-  local attempt=0
-  local had_success=0
-  local had_failure=0
-  local rc
-  local retry_sleep
+  local actual_sleep
+
+  now="$(now_epoch)"
+  remaining=$((deadline_epoch - now))
+  if ((remaining <= 0)); then
+    return 0
+  fi
+
+  actual_sleep="$delay_seconds"
+  if ((actual_sleep > remaining)); then
+    actual_sleep="$remaining"
+  fi
+
+  if ((actual_sleep > 0)); then
+    sleep "$actual_sleep"
+  fi
+}
+
+run_target_window() {
+  local index="${1:?target index is required}"
+  local host="${target_hosts[$index]}"
+  local port="${target_ports[$index]}"
+  local window_seconds="${target_durations[$index]}"
+  local target_name
+  local target_deadline
+  local now
+  local remaining
   local protocol
+  local segment_duration
+  local had_success=0
+  local used_busy=0
+  local fatal_error=0
+  local normal_seconds=0
+  local busy_seconds=0
+  local actual_seconds=0
+  local effective_elapsed
 
-  target="$(target_display "$host" "$port")"
-  deadline="$(($(date +%s) + allocated_duration))"
+  target_name="$(target_display "$host" "$port")"
+  target_deadline=$((TARGET_CURSOR_EPOCH + window_seconds))
+  TARGET_CURSOR_EPOCH="$target_deadline"
 
-  log "INFO" "starting iperf3 cover target window: target=${target} duration=${allocated_duration}s max_segment=${COVER_MAX_SEGMENT_SECONDS}s retry_delay=${COVER_RETRY_DELAY_SECONDS}s cover_type=${COVER_TYPE}"
+  log "INFO" "target start iface=$EGRESS_DEV target=$target_name planned_window_seconds=$window_seconds deadline_epoch=$target_deadline"
 
   while :; do
-    now="$(date +%s)"
-    remaining=$((deadline - now))
-    if [[ "$remaining" -le 0 ]]; then
+    now="$(now_epoch)"
+    remaining=$((target_deadline - now))
+    if ((remaining <= 0)); then
+      break
+    fi
+
+    if ! sample_segment_rate; then
+      log "ERROR" "busy sample failed for target=$target_name"
+      fatal_error=1
+      break
+    fi
+
+    now="$(now_epoch)"
+    remaining=$((target_deadline - now))
+    if ((remaining <= 0)); then
       break
     fi
 
     segment_duration="$remaining"
-    if [[ "$segment_duration" -gt "$COVER_MAX_SEGMENT_SECONDS" ]]; then
-      segment_duration="$COVER_MAX_SEGMENT_SECONDS"
+    if ((segment_duration > MAX_SEGMENT_SECONDS)); then
+      segment_duration="$MAX_SEGMENT_SECONDS"
     fi
 
-    attempt=$((attempt + 1))
     protocol="$(choose_cover_type)"
-    log "INFO" "starting iperf3 ${protocol} cover segment: target=${target} attempt=${attempt} duration=${segment_duration}s"
-    if run_iperf3_process "$protocol" "$host" "$port" "$segment_duration"; then
+    run_iperf3_segment "$protocol" "$host" "$port" "$segment_duration" "$SEGMENT_RATE_BPS"
+
+    effective_elapsed="$SEGMENT_ACTUAL_SECONDS"
+    if ((effective_elapsed <= 0)); then
+      effective_elapsed="$segment_duration"
+    fi
+
+    if [[ "$SEGMENT_EXIT_CODE" -eq 0 ]]; then
       had_success=1
-      log "INFO" "iperf3 ${protocol} cover segment completed: target=${target} attempt=${attempt}"
+      actual_seconds=$((actual_seconds + effective_elapsed))
+      if [[ "$SEGMENT_IS_BUSY" -eq 1 ]]; then
+        used_busy=1
+        busy_seconds=$((busy_seconds + effective_elapsed))
+      else
+        normal_seconds=$((normal_seconds + effective_elapsed))
+      fi
+      log "INFO" "segment success iface=$EGRESS_DEV target=$target_name protocol=$protocol planned_seconds=$segment_duration actual_seconds=$effective_elapsed segment_rate_bps=$SEGMENT_RATE_BPS busy=$SEGMENT_IS_BUSY"
     else
-      rc=$?
-      had_failure=1
-      log "WARN" "iperf3 ${protocol} cover segment failed with exit code $rc; retrying until target window ends: target=${target} attempt=${attempt}"
-
-      now="$(date +%s)"
-      remaining=$((deadline - now))
-      if [[ "$remaining" -le 0 ]]; then
-        break
-      fi
-
-      retry_sleep="$COVER_RETRY_DELAY_SECONDS"
-      if [[ "$retry_sleep" -gt "$remaining" ]]; then
-        retry_sleep="$remaining"
-      fi
-      log "INFO" "waiting ${retry_sleep}s before retry: target=${target}"
-      sleep "$retry_sleep"
+      log "WARN" "segment failed iface=$EGRESS_DEV target=$target_name protocol=$protocol planned_seconds=$segment_duration actual_seconds=$effective_elapsed segment_rate_bps=$SEGMENT_RATE_BPS busy=$SEGMENT_IS_BUSY exit_code=$SEGMENT_EXIT_CODE"
+      sleep_until_deadline "$target_deadline" "$RETRY_DELAY_SECONDS"
     fi
   done
 
-  if [[ "$had_success" -eq 0 ]]; then
-    log "ERROR" "target window ended without a successful iperf3 segment: target=${target}"
+  if ((fatal_error == 1 || had_success == 0)); then
+    target_results[index]="failed"
+    RUN_HAS_FAILURE=1
+  elif ((used_busy == 1)); then
+    target_results[index]="throttled"
+  else
+    target_results[index]="completed"
+  fi
+
+  target_normal_seconds[index]="$normal_seconds"
+  target_busy_seconds[index]="$busy_seconds"
+  target_actual_seconds[index]="$actual_seconds"
+  log "INFO" "target result iface=$EGRESS_DEV target=$target_name result=${target_results[$index]} planned_window_seconds=$window_seconds actual_send_seconds=$actual_seconds normal_rate_seconds=$normal_seconds busy_rate_seconds=$busy_seconds normalized_cover_rate_bps=$RELAY_COVER_RATE_BPS busy_rate_bps=$RELAY_BUSY_RATE_BPS"
+}
+
+main() {
+  local target_count
+  local total_duration
+  local delay_seconds
+  local max_delay
+  local run_start_epoch
+  local global_deadline_epoch
+  local i
+
+  require_root
+  require_cmd date flock ip iperf3 sleep timeout
+  require_relay_iperf3_capabilities
+  load_and_validate_relay_env "$ENV_FILE" 1
+  load_targets
+
+  exec 9>"$LOCK_FILE"
+  if ! flock -n 9; then
+    log "INFO" "another cover sender run is already active; exiting"
+    exit 0
+  fi
+
+  target_count="${#target_hosts[@]}"
+  total_duration="$(random_between "$RELAY_DURATION_MIN_SECONDS" "$RELAY_DURATION_MAX_SECONDS")"
+  max_delay=$((3600 - RUN_END_GUARD_SECONDS - total_duration))
+  if [[ "${RELAY_TEST_FIXED_DELAY_SECONDS:-}" =~ ^[0-9]+$ ]]; then
+    delay_seconds="$RELAY_TEST_FIXED_DELAY_SECONDS"
+  else
+    delay_seconds="$(random_between 0 "$max_delay")"
+  fi
+
+  shuffle_targets
+  allocate_target_durations "$total_duration"
+
+  run_start_epoch=$(( $(now_epoch) + delay_seconds ))
+  global_deadline_epoch=$((run_start_epoch + total_duration))
+  TARGET_CURSOR_EPOCH="$run_start_epoch"
+  RUN_HAS_FAILURE=0
+
+  log "INFO" "cover sender plan iface=$EGRESS_DEV total_duration_seconds=$total_duration delay_seconds=$delay_seconds cover_rate_bps=$RELAY_COVER_RATE_BPS busy_rate_bps=$RELAY_BUSY_RATE_BPS cover_type=$COVER_TYPE target_count=$target_count global_deadline_epoch=$global_deadline_epoch"
+  log "INFO" "cover target order: $(target_order_string)"
+  log "INFO" "cover target durations: $(target_duration_string)"
+
+  sleep "$delay_seconds"
+
+  for ((i = 0; i < target_count; i++)); do
+    run_target_window "$i"
+  done
+
+  for ((i = 0; i < target_count; i++)); do
+    log "INFO" "run summary target=$(target_display "${target_hosts[$i]}" "${target_ports[$i]}") result=${target_results[$i]} planned_window_seconds=${target_durations[$i]} actual_send_seconds=${target_actual_seconds[$i]} normal_rate_seconds=${target_normal_seconds[$i]} busy_rate_seconds=${target_busy_seconds[$i]}"
+  done
+
+  if [[ "$RUN_HAS_FAILURE" -eq 1 ]]; then
+    log "ERROR" "relay cover sender finished with at least one failed target"
     return 1
   fi
 
-  if [[ "$had_failure" -ne 0 ]]; then
-    log "WARN" "target window completed with one or more retried iperf3 failures: target=${target}"
-  else
-    log "INFO" "target window completed successfully: target=${target}"
-  fi
+  log "INFO" "relay cover sender finished successfully"
 }
 
-failed=0
-for ((i = 0; i < target_count; i++)); do
-  run_duration="${target_durations[$i]}"
-
-  if run_target_until_deadline "${target_hosts[$i]}" "${target_ports[$i]}" "$run_duration"; then
-    :
-  else
-    rc=$?
-    failed=1
-    log "ERROR" "iperf3 cover target window failed with exit code $rc: target=$(target_display "${target_hosts[$i]}" "${target_ports[$i]}")"
-  fi
-done
-
-if [[ "$failed" -ne 0 ]]; then
-  die "one or more iperf3 cover runs failed"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-log "INFO" "all iperf3 cover runs completed successfully"

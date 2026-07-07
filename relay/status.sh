@@ -10,20 +10,15 @@ else
   exit 1
 fi
 
-ENV_FILE="/etc/relay-cover-traffic/relay.env"
-ENV_SOURCE="$SCRIPT_DIR/../config/relay.env"
-SING_BOX_CONFIG_DIR="/etc/sing-box"
-SING_BOX_CONFIG="$SING_BOX_CONFIG_DIR/config.json"
-SING_BOX_DATA_DIR="/var/lib/sing-box"
+ENV_FILE="${RELAY_RUNTIME_ENV_FILE:-/etc/relay-cover-traffic/relay.env}"
 ports=()
 
 collect_target_ports() {
   local raw_targets="${1:?target list is required}"
-  local _target_host
+  local _host
   local port
 
-  parse_target_list "$raw_targets" >/dev/null
-  while IFS=$'\t' read -r _target_host port; do
+  while IFS=$'\t' read -r _host port; do
     ports+=("$port")
   done < <(parse_target_list "$raw_targets")
 }
@@ -35,74 +30,81 @@ port_regex() {
 
 show_unit_status() {
   local unit="${1:?unit is required}"
-
   systemctl --no-pager --lines=0 status "$unit" || true
 }
 
-show_current_activation_journal() {
-  local unit="${1:?unit is required}"
-  local state=""
-  local since=""
-
-  state="$(systemctl show "$unit" -p ActiveState --value 2>/dev/null || true)"
-  [[ "$state" == "active" || "$state" == "activating" ]] || return 0
-
-  since="$(systemctl show "$unit" -p ActiveEnterTimestamp --value 2>/dev/null || true)"
-  if [[ -n "$since" && "$since" != "n/a" ]]; then
-    journalctl -u "$unit" --since "$since" -n 80 --no-pager || true
-  else
-    journalctl -u "$unit" -n 80 --no-pager || true
+show_sender_journal() {
+  if systemctl_is_activeish relay-cover-sender.service; then
+    local since
+    since="$(systemctl show relay-cover-sender.service -p ActiveEnterTimestamp --value 2>/dev/null || true)"
+    if [[ -n "$since" && "$since" != "n/a" ]]; then
+      journalctl -u relay-cover-sender.service --since "$since" -n 80 --no-pager || true
+      return 0
+    fi
   fi
+
+  journalctl -u relay-cover-sender.service -n 80 --no-pager || true
 }
 
-show_sing_box_version() {
-  if command -v sing-box >/dev/null 2>&1; then
-    sing-box version || true
-  else
-    log "WARN" "sing-box command not found"
-  fi
-}
-
-show_sing_box_check() {
-  if ! command -v sing-box >/dev/null 2>&1; then
-    log "WARN" "cannot check sing-box config because sing-box command is not installed"
+show_iperf3_capabilities() {
+  if ! command -v iperf3 >/dev/null 2>&1; then
+    log "WARN" "iperf3 command not found"
     return 0
   fi
 
-  if [[ ! -s "$SING_BOX_CONFIG" ]]; then
-    log "WARN" "$SING_BOX_CONFIG is missing or empty"
-    return 0
+  iperf3 --version | head -n 1 || true
+  if iperf3_supports_option "--bind-dev"; then
+    log "INFO" "iperf3 supports --bind-dev"
+  else
+    log "WARN" "iperf3 does not support --bind-dev"
   fi
 
-  sing-box check -D "$SING_BOX_DATA_DIR" -C "$SING_BOX_CONFIG_DIR" || true
+  if iperf3_supports_option "--dscp"; then
+    log "INFO" "iperf3 supports --dscp"
+  else
+    log "WARN" "iperf3 does not support --dscp"
+  fi
+
+  if iperf3_supports_option "--fq-rate"; then
+    log "INFO" "iperf3 supports --fq-rate"
+  else
+    log "WARN" "iperf3 does not support --fq-rate"
+  fi
 }
 
-require_root
-sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
-load_env_file "$ENV_FILE"
-require_env EGRESS_DEV RELAY_QOS_TARGETS COVER_TARGETS
-COVER_TYPE="${COVER_TYPE:-auto}"
-require_cmd systemctl tc ss journalctl grep tr
+main() {
+  require_root
+  require_cmd systemctl journalctl ss grep ip
 
-collect_target_ports "$RELAY_QOS_TARGETS"
-collect_target_ports "$COVER_TARGETS"
+  if [[ -f "$ENV_FILE" ]]; then
+    load_and_validate_relay_env "$ENV_FILE" 0
+    collect_target_ports "$COVER_TARGETS"
+    printf 'EGRESS_DEV=%s\n' "$EGRESS_DEV"
+    printf 'COVER_TARGETS=%s\n' "$COVER_TARGETS"
+    printf 'COVER_RATE=%s (%sbps)\n' "$COVER_RATE" "$RELAY_COVER_RATE_BPS"
+    printf 'COVER_DURATION_RANGE=%s\n' "$COVER_DURATION_RANGE"
+    printf 'COVER_TYPE=%s\n' "$COVER_TYPE"
+  else
+    log "WARN" "relay runtime env not found: $ENV_FILE"
+  fi
 
-printf 'RELAY_QOS_TARGETS=%s\n' "$RELAY_QOS_TARGETS"
-printf 'COVER_TARGETS=%s\n' "$COVER_TARGETS"
-printf 'COVER_TYPE=%s\n' "$COVER_TYPE"
+  show_unit_status relay-cover-sender.service
+  show_unit_status relay-cover-sender.timer
+  systemctl list-timers relay-cover-sender.timer --no-pager || true
 
-show_unit_status sing-box.service
-show_sing_box_version
-show_sing_box_check
-ss -tulpn | grep sing-box || true
-show_unit_status relay-cover-qos.service
-show_unit_status relay-cover-sender.service
-show_unit_status relay-cover-sender.timer
-systemctl list-timers relay-cover-sender.timer --no-pager || true
-tc -s qdisc show dev "$EGRESS_DEV" || true
-tc -s class show dev "$EGRESS_DEV" || true
-tc filter show dev "$EGRESS_DEV" parent 1: || true
-ss -tupn | grep -E ":($(port_regex))\\b" || true
-show_current_activation_journal sing-box.service
-show_current_activation_journal relay-cover-qos.service
-show_current_activation_journal relay-cover-sender.service
+  if [[ -n "${EGRESS_DEV:-}" ]]; then
+    ip link show dev "$EGRESS_DEV" || true
+  fi
+
+  show_iperf3_capabilities
+
+  if [[ "${#ports[@]}" -gt 0 ]]; then
+    ss -tupn | grep -E ":($(port_regex))\\b" || true
+  fi
+
+  show_sender_journal
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
