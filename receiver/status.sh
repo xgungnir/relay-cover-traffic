@@ -71,6 +71,12 @@ if unit_exists relay-cover-receiver-watchdog.timer; then
 else
   log "INFO" "relay-cover-receiver-watchdog.timer is not installed"
 fi
+if unit_exists relay-cover-receiver-firewall-refresh.timer; then
+  systemctl status relay-cover-receiver-firewall-refresh.timer --no-pager || true
+  systemctl status relay-cover-receiver-firewall-refresh.service --no-pager || true
+else
+  log "INFO" "relay-cover-receiver-firewall-refresh.timer is not installed"
+fi
 ip -br addr 2>/dev/null | grep -vE '^(lo|warp|wg|tun|tailscale|docker|br-|virbr|veth)' || true
 ss -tulpn | grep "$COVER_RECEIVER_PORT" || true
 log "INFO" "receiver TCP socket state summary"
@@ -102,6 +108,9 @@ if unit_exists relay-cover-receiver-v6.service; then
 fi
 if unit_exists relay-cover-receiver-watchdog.service; then
   journalctl -u relay-cover-receiver-watchdog.service -n 30 --no-pager || true
+fi
+if unit_exists relay-cover-receiver-firewall-refresh.service; then
+  journalctl -u relay-cover-receiver-firewall-refresh.service -n 30 --no-pager || true
 fi
 
 if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' sing-box 2>/dev/null | grep -q 'install ok installed'; then

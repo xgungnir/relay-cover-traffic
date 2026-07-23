@@ -20,6 +20,7 @@ Receiver side:
 - installs the `sing-box` package when needed
 - installs IPv4/IPv6 `iperf3` receiver services
 - applies project firewall rules for `COVER_RECEIVER_PORT`
+- refreshes receiver firewall DNS whitelist entries every 30 minutes
 
 ## Relay Config Contract
 
@@ -86,6 +87,20 @@ nano config/receiver.env
 cd receiver
 sudo ./install.sh
 ```
+
+Receiver whitelist entries may be IP literals, CIDRs, or DNS names:
+
+```bash
+COVER_SOURCE_WHITELIST_V4="47.113.225.177, business-update2.rainydata.com"
+COVER_SOURCE_WHITELIST_V6="2402:4e00:c032:7000:98f2:1c6:42c8:0"
+```
+
+DNS names in `COVER_SOURCE_WHITELIST_V4` resolve only A records. DNS names in
+`COVER_SOURCE_WHITELIST_V6` resolve only AAAA records. Receiver install creates
+`relay-cover-receiver-firewall-refresh.timer`, which refreshes those resolved
+firewall allow rules every 30 minutes. If a DNS name cannot be resolved, the
+refresh fails before replacing firewall rules, so the previous working rules stay
+in place.
 
 Relay:
 

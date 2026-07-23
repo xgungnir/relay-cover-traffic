@@ -20,6 +20,8 @@ LEGACY_NFT_INCLUDE_FILE="$NFT_INCLUDE_DIR/vps-relay-dummy.nft"
 LEGACY_NFT_TABLE="vps_relay_dummy"
 IPTABLES_CHAIN="RELAY_COVER_TRAFFIC"
 LEGACY_IPTABLES_CHAIN="VPS_RELAY_DUMMY"
+FIREWALL_REFRESH_SERVICE_FILE="/etc/systemd/system/relay-cover-receiver-firewall-refresh.service"
+FIREWALL_REFRESH_TIMER_FILE="/etc/systemd/system/relay-cover-receiver-firewall-refresh.timer"
 NFT_INCLUDE_MARKER_BEGIN="# relay-cover-traffic include begin"
 NFT_INCLUDE_MARKER_END="# relay-cover-traffic include end"
 COVER_SOURCE_WHITELIST_V4_ENTRIES=()
@@ -93,34 +95,139 @@ delete_xtables_chain() {
 parse_whitelist() {
   local raw="${1:-}"
   local family="${2:?address family is required}"
-  local -n out="$3"
+  local out_name="${3:?output array name is required}"
   local entry
   local normalized
-  local existing
+  local resolved
+  local resolved_output
+  local -a parsed_entries=()
 
   normalized="${raw//,/ }"
-  out=()
 
   for entry in $normalized; do
     case "$family" in
       ipv4)
-        [[ "$entry" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$ ]] || die "invalid IPv4 whitelist entry: $entry"
+        if is_ipv4_or_cidr "$entry"; then
+          add_unique_parsed_whitelist_entry "$entry"
+          continue
+        fi
+        is_dns_name "$entry" || die "invalid IPv4 whitelist entry: $entry"
+        resolved_output="$(resolve_whitelist_name "$entry" ipv4)"
+        while IFS= read -r resolved; do
+          [[ -n "$resolved" ]] || continue
+          add_unique_parsed_whitelist_entry "$resolved"
+        done <<<"$resolved_output"
         ;;
       ipv6)
-        [[ "$entry" == *:* ]] || die "invalid IPv6 whitelist entry: $entry"
-        [[ "$entry" =~ ^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$ ]] || die "invalid IPv6 whitelist entry: $entry"
+        if is_ipv6_or_cidr "$entry"; then
+          add_unique_parsed_whitelist_entry "$entry"
+          continue
+        fi
+        is_dns_name "$entry" || die "invalid IPv6 whitelist entry: $entry"
+        resolved_output="$(resolve_whitelist_name "$entry" ipv6)"
+        while IFS= read -r resolved; do
+          [[ -n "$resolved" ]] || continue
+          add_unique_parsed_whitelist_entry "$resolved"
+        done <<<"$resolved_output"
         ;;
       *)
         die "internal error: unsupported whitelist family $family"
         ;;
     esac
-
-    for existing in "${out[@]}"; do
-      [[ "$existing" == "$entry" ]] && continue 2
-    done
-
-    out+=("$entry")
   done
+
+  eval "$out_name=()"
+  for entry in "${parsed_entries[@]+"${parsed_entries[@]}"}"; do
+    eval "$out_name+=(\"\$entry\")"
+  done
+}
+
+add_unique_parsed_whitelist_entry() {
+  local entry="${1:?entry is required}"
+  local existing
+
+  for existing in "${parsed_entries[@]+"${parsed_entries[@]}"}"; do
+    [[ "$existing" == "$entry" ]] && return 0
+  done
+
+  parsed_entries+=("$entry")
+}
+
+is_ipv4_or_cidr() {
+  local entry="${1:-}"
+  local ip="${entry%%/*}"
+  local prefix=""
+
+  if [[ "$entry" == */* ]]; then
+    prefix="${entry#*/}"
+    [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+    ((10#$prefix <= 32)) || return 1
+  fi
+
+  is_ipv4_literal "$ip"
+}
+
+is_ipv6_or_cidr() {
+  local entry="${1:-}"
+  local ip="${entry%%/*}"
+  local prefix=""
+
+  if [[ "$entry" == */* ]]; then
+    prefix="${entry#*/}"
+    [[ "$prefix" =~ ^[0-9]+$ ]] || return 1
+    ((10#$prefix <= 128)) || return 1
+  fi
+
+  is_ipv6_literal "$ip"
+}
+
+is_dns_name() {
+  local name="${1:-}"
+  local label
+  local -a labels
+
+  [[ ${#name} -le 253 ]] || return 1
+  [[ "$name" == *.* ]] || return 1
+  [[ "$name" != *..* ]] || return 1
+  [[ "$name" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+
+  IFS=. read -r -a labels <<<"$name"
+  for label in "${labels[@]}"; do
+    [[ -n "$label" && ${#label} -le 63 ]] || return 1
+    [[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$ ]] || return 1
+  done
+}
+
+resolve_whitelist_name() {
+  local name="${1:?DNS name is required}"
+  local family="${2:?address family is required}"
+  local getent_db
+  local address
+  local -a resolved=()
+
+  require_cmd getent sort
+
+  case "$family" in
+    ipv4) getent_db="ahostsv4" ;;
+    ipv6) getent_db="ahostsv6" ;;
+    *) die "internal error: unsupported resolver family $family" ;;
+  esac
+
+  while read -r address _; do
+    case "$family" in
+      ipv4)
+        is_ipv4_literal "$address" || continue
+        ;;
+      ipv6)
+        is_ipv6_literal "$address" || continue
+        ;;
+    esac
+    resolved+=("$address")
+  done < <(getent "$getent_db" "$name" 2>/dev/null | sort -u)
+
+  [[ "${#resolved[@]}" -gt 0 ]] || die "DNS name $name did not resolve any $family whitelist address"
+  log "INFO" "resolved $family whitelist name $name to: ${resolved[*]}"
+  printf '%s\n' "${resolved[@]}"
 }
 
 load_whitelists() {
@@ -220,6 +327,44 @@ save_iptables_legacy_rules() {
   ensure_iptables_persistent
   log "INFO" "saving IPv4 and IPv6 iptables legacy rules with netfilter-persistent"
   netfilter-persistent save
+}
+
+write_firewall_refresh_units() {
+  [[ "${RELAY_FIREWALL_REFRESH_SKIP_UNIT_INSTALL:-0}" != "1" ]] || return 0
+
+  require_cmd systemctl chmod
+
+  log "INFO" "writing receiver firewall refresh service: $FIREWALL_REFRESH_SERVICE_FILE"
+  cat >"$FIREWALL_REFRESH_SERVICE_FILE" <<UNIT
+[Unit]
+Description=Refresh relay cover receiver firewall whitelist
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env RELAY_FIREWALL_REFRESH_SKIP_UNIT_INSTALL=1 ${SCRIPT_DIR}/setup-firewall.sh
+UNIT
+
+  log "INFO" "writing receiver firewall refresh timer: $FIREWALL_REFRESH_TIMER_FILE"
+  cat >"$FIREWALL_REFRESH_TIMER_FILE" <<UNIT
+[Unit]
+Description=Refresh relay cover receiver firewall whitelist every 30 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+RandomizedDelaySec=2min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+
+  chmod 0644 "$FIREWALL_REFRESH_SERVICE_FILE" "$FIREWALL_REFRESH_TIMER_FILE"
+  systemctl daemon-reload
+  systemctl enable --now relay-cover-receiver-firewall-refresh.timer
 }
 
 apply_nftables_rules() {
@@ -322,9 +467,13 @@ apply_iptables_legacy_rules() {
   log "INFO" "project iptables legacy rules applied"
 }
 
+if [[ "${RELAY_SETUP_FIREWALL_SOURCE_ONLY:-0}" == "1" ]]; then
+  # shellcheck disable=SC2317
+  return 0 2>/dev/null || exit 0
+fi
+
 require_root
-sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
-load_env_file "$ENV_FILE"
+load_env_file "$ENV_SOURCE"
 require_env COVER_RECEIVER_PORT FIREWALL_BACKEND
 validate_port "$COVER_RECEIVER_PORT" || die "invalid COVER_RECEIVER_PORT: $COVER_RECEIVER_PORT"
 load_whitelists
@@ -342,3 +491,6 @@ case "$BACKEND" in
   iptables-legacy) apply_iptables_legacy_rules ;;
   *) die "internal error: unexpected backend $BACKEND" ;;
 esac
+
+sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
+write_firewall_refresh_units

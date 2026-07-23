@@ -283,6 +283,28 @@ MOCK
   chmod +x "$path"
 }
 
+write_mock_getent() {
+  local path="${1:?path is required}"
+  cat >"$path" <<'MOCK'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+case "${1:-}:${2:-}" in
+  ahostsv4:business-update2.rainydata.com)
+    printf '223.72.44.115 STREAM business-update2.rainydata.com\n'
+    printf '223.72.44.115 DGRAM\n'
+    ;;
+  ahostsv6:dynamic-v6.example.com)
+    printf '2409:8a00:2644:8702:216:3eff:fed1:67bd STREAM dynamic-v6.example.com\n'
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+MOCK
+  chmod +x "$path"
+}
+
 write_mock_iperf3_install() {
   local path="${1:?path is required}"
   cat >"$path" <<'MOCK'
@@ -796,6 +818,7 @@ test_install_idempotent_and_units() {
   make_lifecycle_mock_env "$dir"
   make_valid_relay_env "$candidate"
 
+  # shellcheck disable=SC2016
   env \
     RELAY_TEST_ALLOW_NON_ROOT=1 \
     RELAY_TEST_SKIP_STATUS=1 \
@@ -1021,6 +1044,60 @@ test_static_repo_checks() {
     "$ROOT_DIR/relay" || return 1
 }
 
+test_receiver_dns_whitelist() {
+  local dir="$TEST_TMP_ROOT/receiver-dns"
+  local mock_bin="$dir/mock-bin"
+  local parsed_v4="$dir/parsed-v4.txt"
+  local parsed_v6="$dir/parsed-v6.txt"
+  local service_file="$dir/relay-cover-receiver-firewall-refresh.service"
+  local timer_file="$dir/relay-cover-receiver-firewall-refresh.timer"
+
+  mkdir -p "$mock_bin"
+  write_mock_getent "$mock_bin/getent"
+  write_mock_systemctl "$mock_bin/systemctl"
+  export MOCK_SYSTEMCTL_STATE_DIR="$dir/systemctl"
+
+  env \
+    RELAY_SETUP_FIREWALL_SOURCE_ONLY=1 \
+    ROOT_DIR="$ROOT_DIR" \
+    PARSED_V4="$parsed_v4" \
+    PARSED_V6="$parsed_v6" \
+    SERVICE_FILE="$service_file" \
+    TIMER_FILE="$timer_file" \
+    MOCK_SYSTEMCTL_STATE_DIR="$MOCK_SYSTEMCTL_STATE_DIR" \
+    PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    bash <<'BASH' >/dev/null || return 1
+set -Eeuo pipefail
+# shellcheck source=receiver/setup-firewall.sh
+source "$ROOT_DIR/receiver/setup-firewall.sh"
+
+parse_whitelist "5.6.7.8/32, business-update2.rainydata.com" ipv4 entries_v4
+printf "%s\n" "${entries_v4[@]}" >"$PARSED_V4"
+
+parse_whitelist "dynamic-v6.example.com" ipv6 entries_v6
+printf "%s\n" "${entries_v6[@]}" >"$PARSED_V6"
+
+FIREWALL_REFRESH_SERVICE_FILE="$SERVICE_FILE"
+FIREWALL_REFRESH_TIMER_FILE="$TIMER_FILE"
+write_firewall_refresh_units
+BASH
+
+  assert_file_contains "$parsed_v4" "5.6.7.8/32" || return 1
+  assert_file_contains "$parsed_v4" "223.72.44.115" || return 1
+  assert_file_contains "$parsed_v6" "2409:8a00:2644:8702:216:3eff:fed1:67bd" || return 1
+  assert_file_contains "$service_file" "RELAY_FIREWALL_REFRESH_SKIP_UNIT_INSTALL=1" || return 1
+  assert_file_contains "$timer_file" "OnUnitActiveSec=30min" || return 1
+
+  # shellcheck disable=SC2016
+  if env \
+    RELAY_SETUP_FIREWALL_SOURCE_ONLY=1 \
+    ROOT_DIR="$ROOT_DIR" \
+    PATH="$mock_bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    bash -c 'source "$ROOT_DIR/receiver/setup-firewall.sh"; parse_whitelist "missing.example.com" ipv4 entries' >/dev/null 2>&1; then
+    return 1
+  fi
+}
+
 main() {
   run_test "relay parser matrix" test_relay_parser_matrix
   run_test "rate and duration matrix" test_rate_and_duration_matrix
@@ -1031,6 +1108,7 @@ main() {
   run_test "apply rollback restores runtime and assets" test_apply_rollback
   run_test "sender runtime matrix" test_sender_runtime_matrix
   run_test "static repo checks" test_static_repo_checks
+  run_test "receiver DNS whitelist" test_receiver_dns_whitelist
 
   printf '%s tests run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
   [[ "$TESTS_FAILED" -eq 0 ]]
