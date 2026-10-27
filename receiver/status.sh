@@ -10,8 +10,10 @@ else
   exit 1
 fi
 
+# shellcheck source=common/firewall.sh
+source "$SCRIPT_DIR/../common/firewall.sh"
+
 ENV_FILE="/etc/relay-cover-traffic/receiver.env"
-ENV_SOURCE="$SCRIPT_DIR/../config/receiver.env"
 NFT_TABLE="relay_cover_traffic"
 LEGACY_UNITS=(
   iperf3-dummy-receiver.service
@@ -52,7 +54,6 @@ show_receiver_unit_status() {
 }
 
 require_root
-sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
 load_env_file "$ENV_FILE"
 require_env COVER_RECEIVER_PORT
 require_cmd systemctl grep ip ss journalctl awk sort
@@ -84,21 +85,16 @@ ss -H -n -t "sport = :${COVER_RECEIVER_PORT}" 2>/dev/null |
   awk '{ states[$1] += 1 } END { for (state in states) print state, states[state] }' |
   sort || true
 
+installed_backend="$(read_firewall_backend)"
+log "INFO" "installed backend: ${installed_backend:-not recorded}"
 if command -v nft >/dev/null 2>&1; then
-  nft list table inet "$NFT_TABLE" 2>/dev/null | grep "$COVER_RECEIVER_PORT" -C 3 || true
+  nft list table inet "$NFT_TABLE" 2>/dev/null || true
 fi
-
-if command -v iptables >/dev/null 2>&1; then
-  log "INFO" "iptables version: $(iptables --version)"
-  iptables -S INPUT | grep RELAY_COVER_TRAFFIC || true
-  iptables -S RELAY_COVER_TRAFFIC 2>/dev/null || true
-fi
-
-if command -v ip6tables >/dev/null 2>&1; then
-  log "INFO" "ip6tables version: $(ip6tables --version)"
-  ip6tables -S INPUT | grep RELAY_COVER_TRAFFIC || true
-  ip6tables -S RELAY_COVER_TRAFFIC 2>/dev/null || true
-fi
+for cmd in iptables-legacy-save ip6tables-legacy-save; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    "$cmd" | awk '/^-A RELAY_COVER_TRAFFIC / || /^-A INPUT .* -j RELAY_COVER_TRAFFIC( |$)/'
+  fi
+done
 
 if unit_exists relay-cover-receiver-v4.service; then
   show_current_activation_journal relay-cover-receiver-v4.service
@@ -111,16 +107,4 @@ if unit_exists relay-cover-receiver-watchdog.service; then
 fi
 if unit_exists relay-cover-receiver-firewall-refresh.service; then
   journalctl -u relay-cover-receiver-firewall-refresh.service -n 30 --no-pager || true
-fi
-
-if command -v dpkg-query >/dev/null 2>&1 && dpkg-query -W -f='${Status}' sing-box 2>/dev/null | grep -q 'install ok installed'; then
-  log "INFO" "sing-box package is installed"
-else
-  log "WARN" "sing-box package is not installed"
-fi
-
-if [[ -s /etc/sing-box/config.json ]]; then
-  log "INFO" "/etc/sing-box/config.json exists and is non-empty"
-else
-  log "WARN" "/etc/sing-box/config.json is missing or empty"
 fi

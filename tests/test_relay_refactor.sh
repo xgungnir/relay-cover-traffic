@@ -1037,6 +1037,9 @@ ENV
 }
 
 test_static_repo_checks() {
+  repo_search_fails 'sing-box|SING_BOX|SAGERNET|common/sb\.sh' \
+    "$ROOT_DIR/receiver" "$ROOT_DIR/relay" "$ROOT_DIR/common" "$ROOT_DIR/config" "$ROOT_DIR/README.md" || return 1
+
   repo_search_fails 'RELAY_QOS_TARGETS|COVER_MIN_SECONDS|COVER_MAX_SECONDS|ALLOW_COVER_RATE_ABOVE_5M|TC_TOTAL_RATE|TC_RELAY_RATE|TC_RELAY_CEIL|TC_COVER_RATE|TC_COVER_CEIL|TC_DEFAULT_RATE|TC_DEFAULT_CEIL' \
     "$ROOT_DIR/relay" "$ROOT_DIR/config/relay.env.example" "$ROOT_DIR/README.md" || return 1
 

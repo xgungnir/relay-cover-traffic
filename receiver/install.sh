@@ -10,11 +10,8 @@ else
   exit 1
 fi
 
-ENV_DIR="/etc/relay-cover-traffic"
-ENV_FILE="$ENV_DIR/receiver.env"
 ENV_SOURCE="$SCRIPT_DIR/../config/receiver.env"
 ENV_EXAMPLE="$SCRIPT_DIR/../config/receiver.env.example"
-SING_BOX_CONFIG="/etc/sing-box/config.json"
 
 require_config_env_file "$ENV_SOURCE" "$ENV_EXAMPLE"
 
@@ -36,14 +33,6 @@ env_has_placeholders() {
   grep -Eq '5\.6\.7\.8|5\.6\.7\.9|2001:db8' "$ENV_SOURCE"
 }
 
-warn_sing_box_config() {
-  if [[ -s "$SING_BOX_CONFIG" ]]; then
-    log "INFO" "sing-box config exists and is non-empty: $SING_BOX_CONFIG"
-  else
-    log "WARN" "$SING_BOX_CONFIG is missing or empty; configure sing-box separately before relying on the downstream service"
-  fi
-}
-
 run_step() {
   local script_name="${1:?script name is required}"
 
@@ -59,13 +48,10 @@ if env_has_placeholders; then
   die "$ENV_SOURCE still contains example whitelist entries; edit it before rerunning install.sh"
 fi
 
-sync_runtime_env_file "$ENV_SOURCE" "$ENV_FILE"
-
 run_step install-deps.sh
-warn_sing_box_config
 
-run_step setup-iperf3-receiver.sh
 run_step setup-firewall.sh
+run_step setup-iperf3-receiver.sh
 
 log "INFO" "receiver installation complete"
 "$SCRIPT_DIR/status.sh" || true

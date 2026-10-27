@@ -103,8 +103,9 @@ write_receiver_unit() {
   cat >"$unit_file" <<UNIT
 [Unit]
 Description=iperf3 cover traffic receiver (${address_family})
-After=network-online.target
+After=network-online.target relay-cover-receiver-firewall-refresh.service
 Wants=network-online.target
+Requires=relay-cover-receiver-firewall-refresh.service
 
 [Service]
 Type=simple
